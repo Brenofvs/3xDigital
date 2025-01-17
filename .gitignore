@@ -1,5 +1,6 @@
 # Ignorar a pasta ./documentos
 documentos/
+prompt.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
