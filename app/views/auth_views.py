@@ -1,12 +1,9 @@
 # D:\#3xDigital\app\views\auth_views.py
 
 from aiohttp import web
-
 from app.services.auth_service import AuthService
-from app.models.database import get_async_engine, get_session_maker
-
-# Importamos a mesma key
-from app.config.settings import DB_SESSION_KEY
+from app.models.database import get_session_maker, get_async_engine
+from app.config.settings import DATABASE_URL, DB_SESSION_KEY
 
 routes = web.RouteTableDef()
 
@@ -15,8 +12,6 @@ async def protected_route(request: web.Request):
     """
     Exemplo de rota que exige um token válido no cabeçalho Authorization.
     """
-    from app.services.auth_service import AuthService
-
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return web.json_response({"error": "Missing or invalid Authorization header"}, status=401)
@@ -54,11 +49,12 @@ async def register_user(request: web.Request):
             "message": "Usuário criado com sucesso",
             "user_id": user.id
         }, status=201)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
     except KeyError as e:
         return web.json_response({"error": f"Campo ausente: {str(e)}"}, status=400)
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
+        return web.json_response({"error": "Erro ao criar usuário"}, status=500)
 
 @routes.post("/auth/login")
 async def login_user(request: web.Request):
@@ -80,12 +76,10 @@ async def login_user(request: web.Request):
     token = auth_service.generate_jwt_token(user)
     return web.json_response({"access_token": token}, status=200)
 
-
 @routes.post("/auth/logout")
 async def logout_user(request: web.Request):
     """
     Rota POST para logout.
     Em JWT stateless, normalmente basta descartar token no cliente.
     """
-    # Caso haja necessidade de invalidar tokens, usar blacklist ou outra solução.
     return web.json_response({"message": "Logout efetuado com sucesso"}, status=200)

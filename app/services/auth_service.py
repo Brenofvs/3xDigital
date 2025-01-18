@@ -22,19 +22,31 @@ class AuthService:
         """
         Cria um novo usuário com hash de senha, de forma assíncrona.
         """
+        # Verifica se o email já está registrado
+        result = await self.db_session.execute(select(User).where(User.email == email))
+        existing_user = result.scalars().first()
+        if existing_user:
+            raise ValueError("O email já está registrado.")
+        
+        # Cria o hash da senha
         salt = bcrypt.gensalt()
         password_hash = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
+        # Cria o novo usuário
         new_user = User(
             name=name,
             email=email,
             password_hash=password_hash,
             role=role
         )
-        self.db_session.add(new_user)
-        await self.db_session.commit()
-        await self.db_session.refresh(new_user)
-        return new_user
+        try:
+            self.db_session.add(new_user)
+            await self.db_session.commit()
+            await self.db_session.refresh(new_user)
+            return new_user
+        except Exception as e:
+            await self.db_session.rollback()
+            raise e
 
     async def authenticate_user(self, email: str, password: str) -> Optional[User]:
         """

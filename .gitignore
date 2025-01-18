@@ -1,6 +1,7 @@
 # Ignorar a pasta ./documentos
 documentos/
 prompt.txt
+test_api.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
