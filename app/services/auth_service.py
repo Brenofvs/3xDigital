@@ -1,5 +1,16 @@
 # D:\#3xDigital\app\services\auth_service.py
 
+"""
+auth_service.py
+
+Este módulo contém a classe AuthService, responsável por lidar com a autenticação e
+autorização de usuários, incluindo criação de usuários, autenticação, geração e verificação
+de tokens JWT, e checagem de permissões.
+
+Classes:
+    AuthService: Provedor de serviços de autenticação e autorização para usuários.
+"""
+
 import bcrypt
 import jwt
 from datetime import timedelta
@@ -12,30 +23,55 @@ from app.models.database import User
 from app.config.settings import JWT_SECRET_KEY, TIMEZONE
 
 class AuthService:
+    """
+    Serviço de autenticação e autorização.
+
+    Métodos:
+        create_user: Cria um novo usuário com hash de senha.
+        authenticate_user: Autentica um usuário com base em e-mail e senha.
+        generate_jwt_token: Gera um token JWT para um usuário.
+        verify_jwt_token: Decodifica e valida um token JWT.
+        check_permissions: Verifica se o usuário tem o papel necessário.
+    """
+
     def __init__(self, db_session: AsyncSession):
         """
-        Recebe a sessão assíncrona do banco de dados (injeção de dependência).
+        Inicializa o AuthService com uma sessão de banco de dados.
+
+        Args:
+            db_session (AsyncSession): Sessão assíncrona do banco de dados.
         """
         self.db_session = db_session
 
-    async def create_user(self, name: str, email: str, password: str, role: str = "affiliate") -> User:
+    async def create_user(self, name: str, email: str, cpf: str, password: str, role: str = "affiliate") -> User:
         """
-        Cria um novo usuário com hash de senha, de forma assíncrona.
+        Cria um novo usuário com hash de senha de forma assíncrona.
+
+        Args:
+            name (str): Nome do usuário.
+            email (str): E-mail do usuário.
+            password (str): Senha do usuário.
+            role (str, optional): Papel do usuário. Padrão é "affiliate".
+
+        Returns:
+            User: Objeto do usuário criado.
+
+        Raises:
+            ValueError: Se o e-mail já estiver registrado.
+            Exception: Caso ocorra algum erro na criação do usuário.
         """
-        # Verifica se o email já está registrado
-        result = await self.db_session.execute(select(User).where(User.email == email))
+        result = await self.db_session.execute(select(User).where((User.email == email) | (User.cpf == cpf)))
         existing_user = result.scalars().first()
         if existing_user:
-            raise ValueError("O email já está registrado.")
+            raise ValueError("E-mail ou CPF já está registrado.")
         
-        # Cria o hash da senha
         salt = bcrypt.gensalt()
         password_hash = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
-        # Cria o novo usuário
         new_user = User(
             name=name,
             email=email,
+            cpf=cpf,
             password_hash=password_hash,
             role=role
         )
@@ -48,15 +84,18 @@ class AuthService:
             await self.db_session.rollback()
             raise e
 
-    async def authenticate_user(self, email: str, password: str) -> Optional[User]:
+    async def authenticate_user(self, identifier: str, password: str) -> Optional[User]:
         """
-        Verifica se existe um usuário com este e-mail e se a senha confere.
-        Retorna o objeto User ou None.
+        Autentica um usuário verificando o e-mail e a senha.
+
+        Args:
+            email (str): E-mail do usuário.
+            password (str): Senha do usuário.
+
+        Returns:
+            Optional[User]: Retorna o objeto do usuário autenticado ou None se as credenciais forem inválidas.
         """
-        # Trocar 'User.__table__.select()' por 'select(User)'
-        result = await self.db_session.execute(
-            select(User).where(User.email == email)
-        )
+        result = await self.db_session.execute(select(User).where((User.email == identifier) | (User.cpf == identifier)))
         user = result.scalars().first()
 
         if user and bcrypt.checkpw(password.encode("utf-8"), user.password_hash.encode("utf-8")):
@@ -65,21 +104,35 @@ class AuthService:
 
     def generate_jwt_token(self, user: User) -> str:
         """
-        Gera um token JWT contendo ID e role do usuário, com expiração de 1 hora.
+        Gera um token JWT contendo informações do usuário.
+
+        Args:
+            user (User): Objeto do usuário para o qual o token será gerado.
+
+        Returns:
+            str: Token JWT gerado.
         """
         expires = TIMEZONE + timedelta(hours=1)
         payload = {
-            "sub": str(user.id),  # agora é string
+            "sub": str(user.id),
             "role": user.role,
             "exp": expires
         }
-
         return jwt.encode(payload, JWT_SECRET_KEY, algorithm="HS256")
 
     @staticmethod
     def verify_jwt_token(token: str) -> dict:
         """
-        Decodifica o JWT, lançando exceções em caso de erro.
+        Decodifica e valida um token JWT.
+
+        Args:
+            token (str): Token JWT a ser validado.
+
+        Returns:
+            dict: Payload decodificado do token.
+
+        Raises:
+            ValueError: Se o token for inválido ou expirado.
         """
         try:
             decoded = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
@@ -92,7 +145,14 @@ class AuthService:
     @staticmethod
     def check_permissions(role_required: str, user_role: str) -> bool:
         """
-        Exemplo simples de checagem de papel do usuário.
+        Verifica se o usuário possui o papel necessário para executar uma ação.
+
+        Args:
+            role_required (str): Papel necessário para acessar o recurso.
+            user_role (str): Papel do usuário atual.
+
+        Returns:
+            bool: True se o usuário tiver permissão, False caso contrário.
         """
         if user_role == "admin":
             return True

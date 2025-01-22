@@ -1,5 +1,22 @@
 # D:\#3xDigital\main.py
 
+"""
+main.py
+
+Este módulo inicializa e executa a aplicação AIOHTTP. Ele configura o banco de dados,
+registra as rotas e inicia o servidor web.
+
+Classes:
+    Nenhuma.
+
+Functions:
+    init_app() -> web.Application:
+        Inicializa a aplicação, configurando o banco de dados e as rotas.
+
+    main() -> None:
+        Executa a aplicação e inicia o servidor.
+"""
+
 import asyncio
 from aiohttp import web
 from app.models.database import create_database, get_session_maker, get_async_engine
@@ -9,6 +26,12 @@ from app.config.settings import DATABASE_URL, DB_SESSION_KEY
 async def init_app():
     """
     Inicializa a aplicação, criando as tabelas do banco de dados e configurando rotas.
+
+    Configura o motor assíncrono do banco de dados e a sessão. Registra as rotas
+    definidas no módulo `auth_views`.
+
+    Returns:
+        web.Application: Instância configurada da aplicação AIOHTTP.
     """
     # Configuração do banco de dados
     engine = get_async_engine(DATABASE_URL)
@@ -29,6 +52,8 @@ async def init_app():
 def main():
     """
     Executa a aplicação.
+
+    Cria o loop de eventos, inicializa a aplicação e inicia o servidor web na porta 8000.
     """
     loop = asyncio.get_event_loop()
     app = loop.run_until_complete(init_app())

@@ -1,5 +1,16 @@
 # D:\#3xDigital\app\tests\conftest.py
 
+"""
+conftest.py
+
+Este módulo contém fixtures para configuração de banco de dados e cliente de teste
+utilizados nos testes da aplicação.
+
+Fixtures:
+    async_db_session: Configura uma sessão de banco de dados assíncrona para testes.
+    test_client_fixture: Configura um cliente de teste para a aplicação AIOHTTP.
+"""
+
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -15,6 +26,16 @@ from app.config.settings import DB_SESSION_KEY
 
 @pytest_asyncio.fixture
 async def async_db_session():
+    """
+    Configura uma sessão de banco de dados assíncrona para testes.
+
+    Cria um banco de dados em memória utilizando SQLite, inicializa as tabelas,
+    e fornece uma sessão para os testes. Após a execução dos testes, o engine
+    do banco de dados é fechado.
+
+    Yields:
+        AsyncSession: Sessão de banco de dados assíncrona configurada para testes.
+    """
     # Banco em memória para testes
     TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
     engine = create_async_engine(TEST_DB_URL, echo=False)
@@ -35,6 +56,16 @@ async def async_db_session():
 
 @pytest_asyncio.fixture
 async def test_client_fixture():
+    """
+    Configura um cliente de teste para a aplicação AIOHTTP.
+
+    Cria um banco de dados em memória utilizando SQLite, inicializa as tabelas,
+    e monta a aplicação AIOHTTP para testes. Injeta uma sessão de banco de dados
+    na aplicação e fornece um cliente de teste.
+
+    Yields:
+        TestClient: Cliente de teste configurado para a aplicação.
+    """
     TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
     engine = create_async_engine(TEST_DB_URL, echo=False)
 

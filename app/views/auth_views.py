@@ -1,5 +1,28 @@
 # D:\#3xDigital\app\views\auth_views.py
 
+"""
+auth_views.py
+
+Este módulo define as rotas relacionadas à autenticação, como login, registro de usuários,
+e verificação de acesso protegido.
+
+Classes:
+    Nenhuma.
+
+Functions:
+    protected_route(request: web.Request) -> web.Response:
+        Exemplo de rota protegida que exige um token JWT válido.
+
+    register_user(request: web.Request) -> web.Response:
+        Rota para registrar um novo usuário no sistema.
+
+    login_user(request: web.Request) -> web.Response:
+        Rota para autenticação de usuários e geração de token JWT.
+
+    logout_user(request: web.Request) -> web.Response:
+        Rota para logout de usuários.
+"""
+
 from aiohttp import web
 from app.services.auth_service import AuthService
 from app.models.database import get_session_maker, get_async_engine
@@ -11,6 +34,12 @@ routes = web.RouteTableDef()
 async def protected_route(request: web.Request):
     """
     Exemplo de rota que exige um token válido no cabeçalho Authorization.
+
+    Args:
+        request (web.Request): Objeto de requisição contendo os cabeçalhos e informações da requisição.
+
+    Returns:
+        web.Response: Resposta JSON informando sucesso ou erro de autenticação.
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -27,12 +56,21 @@ async def protected_route(request: web.Request):
 async def register_user(request: web.Request):
     """
     Rota POST para registro de usuário.
-    JSON de entrada: {
-      "name": "...",
-      "email": "...",
-      "password": "...",
-      "role": "affiliate"
-    }
+
+    JSON de entrada:
+        {
+          "name": "...",
+          "email": "...",
+          "cpf": "...",
+          "password": "...",
+          "role": "affiliate"
+        }
+
+    Args:
+        request (web.Request): Objeto de requisição contendo o corpo da requisição em JSON.
+
+    Returns:
+        web.Response: Resposta JSON informando o status do registro e o ID do usuário criado.
     """
     data = await request.json()
     session = request.app[DB_SESSION_KEY]
@@ -42,6 +80,7 @@ async def register_user(request: web.Request):
         user = await auth_service.create_user(
             name=data["name"],
             email=data["email"],
+            cpf=data["cpf"],  # Novo campo para CPF
             password=data["password"],
             role=data.get("role", "affiliate")
         )
@@ -60,16 +99,27 @@ async def register_user(request: web.Request):
 async def login_user(request: web.Request):
     """
     Rota POST para login.
-    JSON de entrada: {
-      "email": "...",
-      "password": "..."
-    }
+
+    JSON de entrada:
+        {
+          "identifier": "...",
+          "password": "..."
+        }
+
+    Args:
+        request (web.Request): Objeto de requisição contendo o corpo da requisição em JSON.
+
+    Returns:
+        web.Response: Resposta JSON contendo o token de acesso ou erro de autenticação.
     """
     data = await request.json()
     session = request.app[DB_SESSION_KEY]
     auth_service = AuthService(session)
 
-    user = await auth_service.authenticate_user(data["email"], data["password"])
+    identifier = data.get("identifier")  # Pode ser email ou CPF
+    password = data.get("password")
+    
+    user = await auth_service.authenticate_user(identifier, password)
     if not user:
         return web.json_response({"error": "Credenciais inválidas"}, status=401)
 
@@ -80,6 +130,13 @@ async def login_user(request: web.Request):
 async def logout_user(request: web.Request):
     """
     Rota POST para logout.
-    Em JWT stateless, normalmente basta descartar token no cliente.
+
+    Em sistemas com JWT stateless, o logout é tratado no cliente descartando o token.
+
+    Args:
+        request (web.Request): Objeto de requisição.
+
+    Returns:
+        web.Response: Resposta JSON indicando sucesso no logout.
     """
     return web.json_response({"message": "Logout efetuado com sucesso"}, status=200)
