@@ -248,3 +248,93 @@ async def test_protected_route_no_token(test_client_fixture):
     assert protected_resp.status == 401
     result = await protected_resp.json()
     assert "Missing or invalid Authorization header" in result["error"]
+
+@pytest.mark.asyncio
+async def test_admin_only_route_valid_admin(test_client_fixture):
+    """
+    Testa o acesso à rota restrita com papel 'admin'.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - Verifica se a resposta retorna status 200.
+        - Verifica se a mensagem de sucesso é retornada.
+    """
+    test_client = test_client_fixture
+    await test_client.post("/auth/register", json={
+        "name": "Admin User",
+        "email": "admin@example.com",
+        "cpf": "12345678909",
+        "password": "securepassword",
+        "role": "admin"
+    })
+    login_resp = await test_client.post("/auth/login", json={
+        "identifier": "admin@example.com",
+        "password": "securepassword"
+    })
+    assert login_resp.status == 200
+    token_data = await login_resp.json()
+    token = token_data["access_token"]
+
+    resp = await test_client.get(
+        "/admin-only",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["message"] == "Bem-vindo à rota de admin!"
+
+@pytest.mark.asyncio
+async def test_admin_only_route_invalid_role(test_client_fixture):
+    """
+    Testa o acesso à rota restrita com papel insuficiente.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - Verifica se a resposta retorna status 403.
+        - Verifica se a mensagem de erro indica acesso negado.
+    """
+    test_client = test_client_fixture
+    await test_client.post("/auth/register", json={
+        "name": "Regular User",
+        "email": "user@example.com",
+        "cpf": "98765432101",
+        "password": "securepassword",
+        "role": "affiliate"
+    })
+    login_resp = await test_client.post("/auth/login", json={
+        "identifier": "user@example.com",
+        "password": "securepassword"
+    })
+    assert login_resp.status == 200
+    token_data = await login_resp.json()
+    token = token_data["access_token"]
+
+    resp = await test_client.get(
+        "/admin-only",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status == 403
+    data = await resp.json()
+    assert "Acesso negado" in data["error"]
+
+@pytest.mark.asyncio
+async def test_admin_only_route_no_token(test_client_fixture):
+    """
+    Testa o acesso à rota restrita sem fornecer token.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - Verifica se a resposta retorna status 401.
+        - Verifica se a mensagem de erro indica ausência de token.
+    """
+    test_client = test_client_fixture
+    resp = await test_client.get("/admin-only")
+    assert resp.status == 401
+    data = await resp.json()
+    assert "Missing or invalid Authorization header" in data["error"]

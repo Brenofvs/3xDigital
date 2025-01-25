@@ -6,10 +6,7 @@ auth_views.py
 Este módulo define as rotas relacionadas à autenticação, como login, registro de usuários,
 e verificação de acesso protegido.
 
-Classes:
-    Nenhuma.
-
-Functions:
+Funções:
     protected_route(request: web.Request) -> web.Response:
         Exemplo de rota protegida que exige um token JWT válido.
 
@@ -21,10 +18,15 @@ Functions:
 
     logout_user(request: web.Request) -> web.Response:
         Rota para logout de usuários.
+
+    admin_only_route(request: web.Request) -> web.Response:
+        Rota de exemplo que utiliza o middleware de autorização para permitir acesso somente
+        a usuários com papel 'admin'.
 """
 
 from aiohttp import web
 from app.services.auth_service import AuthService
+from app.middleware.authorization_middleware import require_role
 from app.models.database import get_session_maker, get_async_engine
 from app.config.settings import DATABASE_URL, DB_SESSION_KEY
 
@@ -51,6 +53,20 @@ async def protected_route(request: web.Request):
         return web.json_response({"message": f"Access granted. User ID: {payload['sub']}"}, status=200)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=401)
+
+@routes.get("/admin-only")
+@require_role(["admin"])
+async def admin_only_route(request: web.Request):
+    """
+    Rota restrita para usuários com papel 'admin'.
+
+    Args:
+        request (web.Request): Objeto de requisição.
+
+    Returns:
+        web.Response: Resposta JSON com mensagem de sucesso para admins.
+    """
+    return web.json_response({"message": "Bem-vindo à rota de admin!"}, status=200)
 
 @routes.post("/auth/register")
 async def register_user(request: web.Request):
