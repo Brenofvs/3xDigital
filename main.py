@@ -20,7 +20,9 @@ Functions:
 import asyncio
 from aiohttp import web
 from app.models.database import create_database, get_session_maker, get_async_engine
-from app.views.auth_views import routes
+from app.views.auth_views import routes as auth_routes
+from app.views.categories_views import routes as categories_routes
+from app.views.products_views import routes as products_routes
 from app.config.settings import DATABASE_URL, DB_SESSION_KEY
 
 async def init_app():
@@ -28,7 +30,7 @@ async def init_app():
     Inicializa a aplicação, criando as tabelas do banco de dados e configurando rotas.
 
     Configura o motor assíncrono do banco de dados e a sessão. Registra as rotas
-    definidas no módulo `auth_views`.
+    definidas nos módulos de autenticação, categorias e produtos.
 
     Returns:
         web.Application: Instância configurada da aplicação AIOHTTP.
@@ -44,8 +46,10 @@ async def init_app():
     app = web.Application()
     app[DB_SESSION_KEY] = session_maker()
 
-    # Registra as rotas
-    app.add_routes(routes)
+    # Registra as rotas de autenticação, categorias e produtos
+    app.add_routes(auth_routes)
+    app.add_routes(categories_routes)
+    app.add_routes(products_routes)
 
     return app
 

@@ -12,17 +12,17 @@ Fixtures:
 """
 
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-
 from app.models.database import Base
-
 from aiohttp import web
 from aiohttp.test_utils import TestServer, TestClient
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-
-from app.views.auth_views import routes
 from app.config.settings import DB_SESSION_KEY
+
+# Importa os módulos de rotas
+from app.views.auth_views import routes as auth_routes
+from app.views.categories_views import routes as categories_routes
+from app.views.products_views import routes as products_routes
 
 @pytest_asyncio.fixture
 async def async_db_session():
@@ -77,13 +77,15 @@ async def test_client_fixture():
     SessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     async_session = SessionLocal()
 
-    # Monta a aplicação
+    # Monta a aplicação AIOHTTP
     app = web.Application()
-    
     # Injeta a sessão usando a key do AIOHTTP
     app[DB_SESSION_KEY] = async_session
 
-    app.add_routes(routes)
+    # Adiciona as rotas de autenticação, categorias e produtos
+    app.add_routes(auth_routes)
+    app.add_routes(categories_routes)
+    app.add_routes(products_routes)
 
     server = TestServer(app)
     client = TestClient(server)
