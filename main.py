@@ -53,15 +53,14 @@ async def init_app():
 
     return app
 
-def main():
+async def main():
     """
     Executa a aplicação.
 
-    Cria o loop de eventos, inicializa a aplicação e inicia o servidor web na porta 8000.
+    Inicializa a aplicação e inicia o servidor web na porta 8000.
     """
-    loop = asyncio.get_event_loop()
-    app = loop.run_until_complete(init_app())
-    web.run_app(app, host="0.0.0.0", port=8000)
+    app = await init_app()
+    return app
 
 if __name__ == "__main__":
-    main()
+    web.run_app(asyncio.run(main()), host="0.0.0.0", port=8000)

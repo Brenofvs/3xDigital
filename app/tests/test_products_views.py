@@ -1,5 +1,3 @@
-# D:\#3xDigital\app\tests\test_products_views.py
-
 """
 test_products_views.py
 
@@ -29,6 +27,7 @@ async def test_create_product_success(test_client_fixture):
     Asserts:
         - Status HTTP 201.
         - Produto criado contém os dados corretos, incluindo associação com categoria (se informada).
+        - O campo 'image_url' deve existir (com valor nulo se não informado).
     """
     client = test_client_fixture
     # Cria uma categoria para associar ao produto.
@@ -49,6 +48,8 @@ async def test_create_product_success(test_client_fixture):
     product = prod_data["product"]
     assert product["name"] == "Notebook"
     assert product["category_id"] == category_id
+    assert "image_url" in product
+    assert product["image_url"] is None
 
 @pytest.mark.asyncio
 async def test_get_product_success(test_client_fixture):
@@ -61,6 +62,7 @@ async def test_get_product_success(test_client_fixture):
     Asserts:
         - Status HTTP 200.
         - Dados do produto correspondem aos cadastrados.
+        - O campo 'image_url' deve existir.
     """
     client = test_client_fixture
     # Cria uma categoria e um produto.
@@ -85,6 +87,7 @@ async def test_get_product_success(test_client_fixture):
     product = data["product"]
     assert product["id"] == product_id
     assert product["name"] == "Console"
+    assert "image_url" in product
 
 @pytest.mark.asyncio
 async def test_update_product_success(test_client_fixture):
@@ -97,6 +100,7 @@ async def test_update_product_success(test_client_fixture):
     Asserts:
         - Status HTTP 200.
         - Dados do produto são atualizados corretamente.
+        - O campo 'image_url' deve existir.
     """
     client = test_client_fixture
     # Cria uma categoria e um produto.
@@ -123,6 +127,7 @@ async def test_update_product_success(test_client_fixture):
     product = update_data["product"]
     assert product["name"] == "Fone de Ouvido Wireless"
     assert product["price"] == 350.00
+    assert "image_url" in product
 
 @pytest.mark.asyncio
 async def test_delete_product_success(test_client_fixture):
@@ -168,6 +173,7 @@ async def test_list_products(test_client_fixture):
     Asserts:
         - Status HTTP 200.
         - A lista de produtos contém os itens criados.
+        - Cada produto deve conter o campo 'image_url'.
     """
     client = test_client_fixture
     # Cria uma categoria e alguns produtos para teste.
@@ -196,3 +202,5 @@ async def test_list_products(test_client_fixture):
     assert "products" in data
     assert isinstance(data["products"], list)
     assert len(data["products"]) >= 2
+    for prod in data["products"]:
+        assert "image_url" in prod

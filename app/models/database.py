@@ -1,5 +1,3 @@
-# D:\#3xDigital\app\models\database.py
-
 """
 database.py
 
@@ -105,6 +103,7 @@ class Product(Base):
         category_id (int): ID da categoria associada.
         created_at (datetime): Data de criação do registro.
         updated_at (datetime): Data da última atualização do registro.
+        image_url (str, opcional): URL da imagem do produto.
     """
     __tablename__ = 'products'
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -115,6 +114,7 @@ class Product(Base):
     category_id = Column(Integer, ForeignKey('categories.id'))
     created_at = Column(DateTime, default=TIMEZONE)
     updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
+    image_url = Column(String(255), nullable=True)
 
     category = relationship("Category", back_populates="products")
     order_items = relationship("OrderItem", order_by="OrderItem.id", back_populates="product")
