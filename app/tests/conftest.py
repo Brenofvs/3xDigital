@@ -24,7 +24,29 @@ from app.views.auth_views import routes as auth_routes
 from app.views.categories_views import routes as categories_routes
 from app.views.products_views import routes as products_routes
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def reset_database():
+    """
+    Reseta o banco de dados antes e depois de cada teste.
+    
+    Remove e recria todas as tabelas, garantindo um ambiente de teste limpo.
+    """
+    TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+    engine = create_async_engine(TEST_DB_URL, echo=False)
+    
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    
+    yield
+    
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    
+    await engine.dispose()
+
+@pytest_asyncio.fixture(scope="function")
 async def async_db_session():
     """
     Configura uma sessão de banco de dados assíncrona para testes.
@@ -54,7 +76,7 @@ async def async_db_session():
     # Fecha o engine ao final
     await engine.dispose()
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="function")
 async def test_client_fixture():
     """
     Configura um cliente de teste para a aplicação AIOHTTP.
