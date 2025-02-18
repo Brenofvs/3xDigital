@@ -6,21 +6,23 @@ categories_views.py
 Este módulo define os endpoints para o gerenciamento de categorias, incluindo operações CRUD.
 
 Endpoints:
-    GET /categories: Lista todas as categorias.
-    GET /categories/{category_id}: Obtém os detalhes de uma categoria específica.
-    POST /categories: Cria uma nova categoria.
-    PUT /categories/{category_id}: Atualiza uma categoria existente.
-    DELETE /categories/{category_id}: Deleta uma categoria.
+    GET /categories: Lista todas as categorias – acesso para usuários autenticados (admin, user ou affiliate).
+    GET /categories/{category_id}: Obtém os detalhes de uma categoria – acesso para usuários autenticados.
+    POST /categories: Cria uma nova categoria – somente admin.
+    PUT /categories/{category_id}: Atualiza uma categoria existente – somente admin.
+    DELETE /categories/{category_id}: Deleta uma categoria – somente admin.
 """
 
 from aiohttp import web
 from sqlalchemy import select
 from app.models.database import Category
 from app.config.settings import DB_SESSION_KEY
+from app.middleware.authorization_middleware import require_role
 
 routes = web.RouteTableDef()
 
 @routes.get("/categories")
+@require_role(["admin", "user", "affiliate"])
 async def list_categories(request: web.Request) -> web.Response:
     """
     Lista todas as categorias cadastradas.
@@ -28,7 +30,6 @@ async def list_categories(request: web.Request) -> web.Response:
     Returns:
         web.Response: Resposta JSON contendo a lista de categorias.
     """
-    # Obtém a instância de AsyncSession injetada na aplicação
     db = request.app[DB_SESSION_KEY]
     result = await db.execute(select(Category))
     categories = result.scalars().all()
@@ -36,6 +37,7 @@ async def list_categories(request: web.Request) -> web.Response:
     return web.json_response({"categories": categories_list}, status=200)
 
 @routes.get("/categories/{category_id}")
+@require_role(["admin", "user", "affiliate"])
 async def get_category(request: web.Request) -> web.Response:
     """
     Obtém os detalhes de uma categoria específica.
@@ -56,6 +58,7 @@ async def get_category(request: web.Request) -> web.Response:
     return web.json_response({"category": category_data}, status=200)
 
 @routes.post("/categories")
+@require_role(["admin"])
 async def create_category(request: web.Request) -> web.Response:
     """
     Cria uma nova categoria.
@@ -86,6 +89,7 @@ async def create_category(request: web.Request) -> web.Response:
     return web.json_response({"message": "Categoria criada com sucesso", "category": category_data}, status=201)
 
 @routes.put("/categories/{category_id}")
+@require_role(["admin"])
 async def update_category(request: web.Request) -> web.Response:
     """
     Atualiza os dados de uma categoria existente.
@@ -117,6 +121,7 @@ async def update_category(request: web.Request) -> web.Response:
     return web.json_response({"message": "Categoria atualizada com sucesso", "category": updated_data}, status=200)
 
 @routes.delete("/categories/{category_id}")
+@require_role(["admin"])
 async def delete_category(request: web.Request) -> web.Response:
     """
     Deleta uma categoria existente.

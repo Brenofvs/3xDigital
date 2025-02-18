@@ -1,5 +1,4 @@
 # D:\#3xDigital\app\tests\test_categories_views.py
-
 """
 test_categories_views.py
 
@@ -17,6 +16,43 @@ Test Functions:
 """
 
 import pytest
+import uuid
+import asyncio
+
+async def get_admin_token(client):
+    """
+    Gera um token de acesso para um usuário administrador com dados únicos.
+
+    Args:
+        client: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Returns:
+        str: Token JWT do administrador.
+
+    Raises:
+        Exception: Se o login falhar.
+    """
+    admin_email = f"admin_{uuid.uuid4().hex[:6]}@test.com"
+    admin_password = "admin123"
+    admin_cpf = str(uuid.uuid4().int % 10**11).zfill(11)
+    reg_resp = await client.post("/auth/register", json={
+        "name": "Admin Test",
+        "email": admin_email,
+        "cpf": admin_cpf,
+        "password": admin_password,
+        "role": "admin"
+    })
+    await asyncio.sleep(0.2)
+    if reg_resp.status != 201:
+        print("Registro ignorado:", await reg_resp.json())
+    login_resp = await client.post("/auth/login", json={
+        "identifier": admin_email,
+        "password": admin_password
+    })
+    login_data = await login_resp.json()
+    if "access_token" not in login_data:
+        raise Exception(f"Falha no login. Resposta recebida: {login_data}")
+    return login_data["access_token"]
 
 @pytest.mark.asyncio
 async def test_create_category_success(test_client_fixture):
@@ -27,11 +63,13 @@ async def test_create_category_success(test_client_fixture):
         test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
 
     Asserts:
-        - Status HTTP 201.
-        - Categoria criada contém 'id' e 'name' corretos.
+        - O endpoint retorna status HTTP 201.
+        - A categoria criada contém os campos 'id' e 'name' com os valores corretos.
     """
     client = test_client_fixture
-    resp = await client.post("/categories", json={"name": "Eletrônicos"})
+    token = await get_admin_token(client)
+    resp = await client.post("/categories", json={"name": "Eletrônicos"},
+                             headers={"Authorization": f"Bearer {token}"})
     assert resp.status == 201
     data = await resp.json()
     assert "category" in data
@@ -47,15 +85,18 @@ async def test_get_category_success(test_client_fixture):
         test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
 
     Asserts:
-        - Status HTTP 200.
-        - Dados da categoria correspondem ao cadastro.
+        - O endpoint retorna status HTTP 200.
+        - Os dados da categoria retornada correspondem aos cadastrados.
     """
     client = test_client_fixture
-    create_resp = await client.post("/categories", json={"name": "Roupas"})
+    token = await get_admin_token(client)
+    create_resp = await client.post("/categories", json={"name": "Roupas"},
+                                    headers={"Authorization": f"Bearer {token}"})
     create_data = await create_resp.json()
     category_id = create_data["category"]["id"]
 
-    resp = await client.get(f"/categories/{category_id}")
+    resp = await client.get(f"/categories/{category_id}",
+                            headers={"Authorization": f"Bearer {token}"})
     assert resp.status == 200
     data = await resp.json()
     assert "category" in data
@@ -71,15 +112,18 @@ async def test_update_category_success(test_client_fixture):
         test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
 
     Asserts:
-        - Status HTTP 200.
-        - Nome da categoria é atualizado conforme esperado.
+        - O endpoint retorna status HTTP 200.
+        - O nome da categoria é atualizado conforme esperado.
     """
     client = test_client_fixture
-    create_resp = await client.post("/categories", json={"name": "Livros"})
+    token = await get_admin_token(client)
+    create_resp = await client.post("/categories", json={"name": "Livros"},
+                                    headers={"Authorization": f"Bearer {token}"})
     create_data = await create_resp.json()
     category_id = create_data["category"]["id"]
 
-    update_resp = await client.put(f"/categories/{category_id}", json={"name": "Literatura"})
+    update_resp = await client.put(f"/categories/{category_id}", json={"name": "Literatura"},
+                                   headers={"Authorization": f"Bearer {token}"})
     assert update_resp.status == 200
     update_data = await update_resp.json()
     assert "category" in update_data
@@ -94,15 +138,18 @@ async def test_delete_category_success(test_client_fixture):
         test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
 
     Asserts:
-        - Status HTTP 200.
-        - Mensagem de sucesso na deleção.
+        - O endpoint retorna status HTTP 200.
+        - A resposta contém a mensagem de sucesso na deleção.
     """
     client = test_client_fixture
-    create_resp = await client.post("/categories", json={"name": "Móveis"})
+    token = await get_admin_token(client)
+    create_resp = await client.post("/categories", json={"name": "Móveis"},
+                                    headers={"Authorization": f"Bearer {token}"})
     create_data = await create_resp.json()
     category_id = create_data["category"]["id"]
 
-    delete_resp = await client.delete(f"/categories/{category_id}")
+    delete_resp = await client.delete(f"/categories/{category_id}",
+                                      headers={"Authorization": f"Bearer {token}"})
     assert delete_resp.status == 200
     delete_data = await delete_resp.json()
     assert "Categoria deletada com sucesso" in delete_data["message"]
@@ -116,15 +163,19 @@ async def test_list_categories(test_client_fixture):
         test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
 
     Asserts:
-        - Status HTTP 200.
-        - Lista de categorias contém ao menos os itens criados.
+        - O endpoint retorna status HTTP 200.
+        - A lista de categorias contém ao menos os itens cadastrados.
     """
     client = test_client_fixture
+    token = await get_admin_token(client)
     # Cria categorias para teste.
-    await client.post("/categories", json={"name": "Esportes"})
-    await client.post("/categories", json={"name": "Beleza"})
+    await client.post("/categories", json={"name": "Esportes"},
+                      headers={"Authorization": f"Bearer {token}"})
+    await client.post("/categories", json={"name": "Beleza"},
+                      headers={"Authorization": f"Bearer {token}"})
 
-    resp = await client.get("/categories")
+    resp = await client.get("/categories",
+                            headers={"Authorization": f"Bearer {token}"})
     assert resp.status == 200
     data = await resp.json()
     assert "categories" in data

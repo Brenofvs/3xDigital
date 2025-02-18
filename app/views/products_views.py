@@ -1,14 +1,16 @@
+# D:\#3xDigital\app\views\categories_views.py
+
 """
 products_views.py
 
 Este módulo define os endpoints para o gerenciamento de produtos, incluindo operações CRUD.
 
 Endpoints:
-    GET /products: Lista todos os produtos.
-    GET /products/{product_id}: Obtém os detalhes de um produto específico.
-    POST /products: Cria um novo produto.
-    PUT /products/{product_id}: Atualiza um produto existente.
-    DELETE /products/{product_id}: Deleta um produto.
+    GET /products: Lista todos os produtos – acesso para usuários autenticados (admin, user ou affiliate).
+    GET /products/{product_id}: Obtém os detalhes de um produto – acesso para usuários autenticados.
+    POST /products: Cria um novo produto – somente admin.
+    PUT /products/{product_id}: Atualiza um produto existente – somente admin.
+    DELETE /products/{product_id}: Deleta um produto – somente admin.
 """
 
 import os
@@ -19,10 +21,12 @@ from aiohttp import web
 from sqlalchemy import select
 from app.models.database import Product, Category
 from app.config.settings import DB_SESSION_KEY
+from app.middleware.authorization_middleware import require_role
 
 routes = web.RouteTableDef()
 
 @routes.get("/products")
+@require_role(["admin", "user", "affiliate"])
 async def list_products(request: web.Request) -> web.Response:
     """
     Lista todos os produtos cadastrados.
@@ -45,6 +49,7 @@ async def list_products(request: web.Request) -> web.Response:
     return web.json_response({"products": products_list}, status=200)
 
 @routes.get("/products/{product_id}")
+@require_role(["admin", "user", "affiliate"])
 async def get_product(request: web.Request) -> web.Response:
     """
     Obtém os detalhes de um produto específico.
@@ -73,6 +78,7 @@ async def get_product(request: web.Request) -> web.Response:
     return web.json_response({"product": product_data}, status=200)
 
 @routes.post("/products")
+@require_role(["admin"])
 async def create_product(request: web.Request) -> web.Response:
     """
     Cria um novo produto.
@@ -84,7 +90,7 @@ async def create_product(request: web.Request) -> web.Response:
                 "description": "Descrição do produto",
                 "price": 100.0,
                 "stock": 10,
-                "category_id": 1,  # Opcional: ID da categoria associada
+                "category_id": 1,
                 "image_url": "URL ou caminho da imagem"  # Opcional
             }
         Caso multipart/form-data:
@@ -97,7 +103,6 @@ async def create_product(request: web.Request) -> web.Response:
         web.Response: Resposta JSON com a mensagem de sucesso e os dados do produto criado.
     """
     db = request.app[DB_SESSION_KEY]
-    # Suporte a multipart e JSON
     if request.content_type.startswith("multipart/"):
         reader = await request.multipart()
         name = None
@@ -147,7 +152,6 @@ async def create_product(request: web.Request) -> web.Response:
                                 break
                             await f.write(chunk)
                     image_url = f"/static/uploads/{safe_filename}"
-
         if not name or price is None or stock is None:
             return web.json_response({"error": "Campos obrigatórios ausentes"}, status=400)
     else:
@@ -158,13 +162,12 @@ async def create_product(request: web.Request) -> web.Response:
             price = float(data["price"])
             stock = int(data["stock"])
             category_id = data.get("category_id")
-            image_url = data.get("image_url")  # Pode ser informado diretamente via JSON
+            image_url = data.get("image_url")
         except KeyError as e:
             return web.json_response({"error": f"Campo ausente: {str(e)}"}, status=400)
         except (ValueError, TypeError):
             return web.json_response({"error": "Dados inválidos para 'price' ou 'stock'"}, status=400)
 
-    # Valida se a categoria existe, caso seja informada.
     if category_id is not None:
         result = await db.execute(select(Category).where(Category.id == category_id))
         category = result.scalar()
@@ -194,6 +197,7 @@ async def create_product(request: web.Request) -> web.Response:
     return web.json_response({"message": "Produto criado com sucesso", "product": product_data}, status=201)
 
 @routes.put("/products/{product_id}")
+@require_role(["admin"])
 async def update_product(request: web.Request) -> web.Response:
     """
     Atualiza os dados de um produto existente.
@@ -266,8 +270,6 @@ async def update_product(request: web.Request) -> web.Response:
                                 break
                             await f.write(chunk)
                     new_image_url = f"/static/uploads/{safe_filename}"
-
-        # Validação da categoria, se for informada.
         if "category_id" in updated_fields:
             result = await db.execute(select(Category).where(Category.id == updated_fields["category_id"]))
             category = result.scalar()
@@ -317,6 +319,7 @@ async def update_product(request: web.Request) -> web.Response:
     return web.json_response({"message": "Produto atualizado com sucesso", "product": updated_data}, status=200)
 
 @routes.delete("/products/{product_id}")
+@require_role(["admin"])
 async def delete_product(request: web.Request) -> web.Response:
     """
     Deleta um produto existente.
