@@ -72,11 +72,19 @@ def require_role(allowed_roles: List[str]) -> Callable:
                 )
 
             user_role = payload.get("role")
+            user_id = payload.get("sub")  # Obtém o ID do usuário do payload (sub).
+
             if user_role not in allowed_roles:
                 raise web.HTTPForbidden(
                     text='{"error": "Acesso negado: privilégio insuficiente."}',
                     content_type="application/json"
                 )
+
+            # Armazena os dados do usuário no request, para uso nas rotas.
+            request["user"] = {
+                "id": int(user_id) if user_id is not None else None,
+                "role": user_role
+            }
 
             return await handler(request)
         return wrapper

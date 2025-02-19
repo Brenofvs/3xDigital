@@ -16,43 +16,7 @@ Test Functions:
 """
 
 import pytest
-import uuid
-import asyncio
-
-async def get_admin_token(client):
-    """
-    Gera um token de acesso para um usuário administrador com dados únicos.
-
-    Args:
-        client: Cliente de teste configurado para a aplicação AIOHTTP.
-
-    Returns:
-        str: Token JWT do administrador.
-
-    Raises:
-        Exception: Se o login falhar.
-    """
-    admin_email = f"admin_{uuid.uuid4().hex[:6]}@test.com"
-    admin_password = "admin123"
-    admin_cpf = str(uuid.uuid4().int % 10**11).zfill(11)
-    reg_resp = await client.post("/auth/register", json={
-        "name": "Admin Test",
-        "email": admin_email,
-        "cpf": admin_cpf,
-        "password": admin_password,
-        "role": "admin"
-    })
-    await asyncio.sleep(0.2)
-    if reg_resp.status != 201:
-        print("Registro ignorado:", await reg_resp.json())
-    login_resp = await client.post("/auth/login", json={
-        "identifier": admin_email,
-        "password": admin_password
-    })
-    login_data = await login_resp.json()
-    if "access_token" not in login_data:
-        raise Exception(f"Falha no login. Resposta recebida: {login_data}")
-    return login_data["access_token"]
+from app.tests.utils.auth_utils import get_admin_token, get_user_token
 
 @pytest.mark.asyncio
 async def test_create_product_success(test_client_fixture):

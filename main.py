@@ -23,6 +23,7 @@ from app.models.database import create_database, get_session_maker, get_async_en
 from app.views.auth_views import routes as auth_routes
 from app.views.categories_views import routes as categories_routes
 from app.views.products_views import routes as products_routes
+from app.views.orders_views import routes as orders_routes
 from app.config.settings import DATABASE_URL, DB_SESSION_KEY
 
 async def init_app():
@@ -50,6 +51,7 @@ async def init_app():
     app.add_routes(auth_routes)
     app.add_routes(categories_routes)
     app.add_routes(products_routes)
+    app.add_routes(orders_routes)
 
     return app
 
