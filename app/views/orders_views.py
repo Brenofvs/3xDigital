@@ -16,18 +16,19 @@ Regras de Negócio:
     - Apenas usuários autenticados podem criar pedidos.
     - O pedido deve conter pelo menos um item válido.
     - O estoque dos produtos será atualizado ao criar um pedido.
+    - Se for enviado um parâmetro de query "ref" (código de afiliado), o sistema
+      registra a venda e calcula a comissão.
     - Apenas administradores podem alterar o status de pedidos.
 
 Dependências:
     - AIOHTTP para manipulação de requisições.
     - SQLAlchemy assíncrono para interagir com o banco de dados.
     - Middleware de autenticação para proteção dos endpoints.
-
 """
 
 from aiohttp import web
 from sqlalchemy import select
-from app.models.database import Order, OrderItem, Product
+from app.models.database import Order, OrderItem, Product, Affiliate, Sale
 from app.config.settings import DB_SESSION_KEY
 from app.middleware.authorization_middleware import require_role
 
@@ -48,13 +49,17 @@ async def create_order(request: web.Request) -> web.Response:
             ]
         }
 
+    Se a query string contiver o parâmetro "ref", o sistema tenta associar o pedido
+    ao afiliado correspondente e calcular a comissão com base na taxa do afiliado.
+
     Returns:
         web.Response: JSON com detalhes do pedido criado.
-
+    
     Regras:
         - Apenas usuários autenticados podem criar pedidos.
         - Valida se os produtos existem e têm estoque disponível.
         - Deduz a quantidade do estoque após criação do pedido.
+        - Se fornecido, o código de referência é validado e a venda é registrada.
     """
     data = await request.json()
     items = data.get("items", [])
@@ -62,7 +67,12 @@ async def create_order(request: web.Request) -> web.Response:
     if not items:
         return web.json_response({"error": "O pedido deve conter pelo menos um item."}, status=400)
 
-    user_id = request["user"]["id"]
+    # Obter dados do usuário autenticado (injetados pelo middleware)
+    try:
+        user_id = request["user"]["id"]
+    except KeyError:
+        return web.json_response({"error": "Dados do usuário não encontrados na requisição."}, status=401)
+
     db = request.app[DB_SESSION_KEY]
 
     total = 0
@@ -96,8 +106,18 @@ async def create_order(request: web.Request) -> web.Response:
     for order_item in order_items:
         order_item.order_id = new_order.id
         db.add(order_item)
-
     await db.commit()
+
+    # Se for enviado um código de afiliado, registra a venda e calcula a comissão
+    ref_code = request.rel_url.query.get("ref")
+    if ref_code:
+        result = await db.execute(select(Affiliate).where(Affiliate.referral_code == ref_code))
+        affiliate = result.scalar()
+        if affiliate:
+            commission = total * affiliate.commission_rate
+            sale = Sale(affiliate_id=affiliate.id, order_id=new_order.id, commission=commission)
+            db.add(sale)
+            await db.commit()
 
     return web.json_response(
         {"message": "Pedido criado com sucesso!", "order_id": new_order.id, "total": total},

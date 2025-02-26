@@ -168,6 +168,8 @@ class OrderItem(Base):
     product = relationship("Product", back_populates="order_items")
 
 
+# Trecho modificado de D:\#3xDigital\app\models\database.py
+
 class Affiliate(Base):
     """
     Representa um afiliado no sistema.
@@ -177,15 +179,22 @@ class Affiliate(Base):
         user_id (int): ID do usuário associado ao afiliado.
         referral_code (str): Código de referência do afiliado.
         commission_rate (float): Taxa de comissão do afiliado.
+        request_status (str): Status da solicitação de afiliação, podendo ser 'pending', 'approved' ou 'blocked'.
     """
     __tablename__ = 'affiliates'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     referral_code = Column(String(255), nullable=False, unique=True)
     commission_rate = Column(Float, nullable=False)
+    request_status = Column(
+        Enum('pending', 'approved', 'blocked', name='affiliate_status'),
+        nullable=False,
+        default='pending'
+    )
 
     user = relationship("User", back_populates="affiliate")
     sales = relationship("Sale", order_by="Sale.id", back_populates="affiliate")
+
 
 
 class Sale(Base):

@@ -24,6 +24,7 @@ from app.views.auth_views import routes as auth_routes
 from app.views.categories_views import routes as categories_routes
 from app.views.products_views import routes as products_routes
 from app.views.orders_views import routes as orders_routes
+from app.views.affiliates_views import routes as affiliates_routes
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
 async def reset_database():
@@ -110,6 +111,7 @@ async def test_client_fixture():
     app.add_routes(categories_routes)
     app.add_routes(products_routes)
     app.add_routes(orders_routes)
+    app.add_routes(affiliates_routes)
 
     server = TestServer(app)
     client = TestClient(server)
