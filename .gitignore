@@ -2,6 +2,7 @@
 documentos/
 prompt.txt
 test_api.py
+frontend/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
