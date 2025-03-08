@@ -194,6 +194,7 @@ class Affiliate(Base):
 
     user = relationship("User", back_populates="affiliate")
     sales = relationship("Sale", order_by="Sale.id", back_populates="affiliate")
+    balance = relationship("AffiliateBalance", uselist=False, back_populates="affiliate", cascade="all, delete-orphan")
 
 
 

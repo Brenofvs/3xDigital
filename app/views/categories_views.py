@@ -11,13 +11,17 @@ Endpoints:
     POST /categories: Cria uma nova categoria – somente admin.
     PUT /categories/{category_id}: Atualiza uma categoria existente – somente admin.
     DELETE /categories/{category_id}: Deleta uma categoria – somente admin.
+    
+Dependências:
+    - AIOHTTP para manipulação de requisições.
+    - CategoryService para lógica de negócios de categorias.
+    - Middleware de autenticação para proteção dos endpoints.
 """
 
 from aiohttp import web
-from sqlalchemy import select
-from app.models.database import Category
 from app.config.settings import DB_SESSION_KEY
 from app.middleware.authorization_middleware import require_role
+from app.services.category_service import CategoryService
 
 routes = web.RouteTableDef()
 
@@ -31,10 +35,11 @@ async def list_categories(request: web.Request) -> web.Response:
         web.Response: Resposta JSON contendo a lista de categorias.
     """
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Category))
-    categories = result.scalars().all()
-    categories_list = [{"id": c.id, "name": c.name} for c in categories]
-    return web.json_response({"categories": categories_list}, status=200)
+    
+    category_service = CategoryService(db)
+    result = await category_service.list_categories()
+    
+    return web.json_response({"categories": result["data"]}, status=200)
 
 @routes.get("/categories/{category_id}")
 @require_role(["admin", "user", "affiliate"])
@@ -50,12 +55,14 @@ async def get_category(request: web.Request) -> web.Response:
     """
     category_id = request.match_info.get("category_id")
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Category).where(Category.id == category_id))
-    category = result.scalar()
-    if not category:
-        return web.json_response({"error": "Categoria não encontrada"}, status=404)
-    category_data = {"id": category.id, "name": category.name}
-    return web.json_response({"category": category_data}, status=200)
+
+    category_service = CategoryService(db)
+    result = await category_service.get_category(category_id)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=404)
+    
+    return web.json_response({"category": result["data"]}, status=200)
 
 @routes.post("/categories")
 @require_role(["admin"])
@@ -81,12 +88,17 @@ async def create_category(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Campo ausente: {str(e)}"}, status=400)
     
     db = request.app[DB_SESSION_KEY]
-    new_category = Category(name=name)
-    db.add(new_category)
-    await db.commit()
-    await db.refresh(new_category)
-    category_data = {"id": new_category.id, "name": new_category.name}
-    return web.json_response({"message": "Categoria criada com sucesso", "category": category_data}, status=201)
+
+    category_service = CategoryService(db)
+    result = await category_service.create_category(name)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=400)
+    
+    return web.json_response(
+        {"message": "Categoria criada com sucesso", "category": result["data"]}, 
+        status=201
+    )
 
 @routes.put("/categories/{category_id}")
 @require_role(["admin"])
@@ -108,17 +120,23 @@ async def update_category(request: web.Request) -> web.Response:
     """
     category_id = request.match_info.get("category_id")
     data = await request.json()
+    name = data.get("name")
+    
+    if not name:
+        return web.json_response({"error": "Nome da categoria é obrigatório"}, status=400)
+    
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Category).where(Category.id == category_id))
-    category = result.scalar()
-    if not category:
-        return web.json_response({"error": "Categoria não encontrada"}, status=404)
-    if "name" in data:
-        category.name = data["name"]
-    await db.commit()
-    await db.refresh(category)
-    updated_data = {"id": category.id, "name": category.name}
-    return web.json_response({"message": "Categoria atualizada com sucesso", "category": updated_data}, status=200)
+
+    category_service = CategoryService(db)
+    result = await category_service.update_category(category_id, name)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=404)
+    
+    return web.json_response(
+        {"message": "Categoria atualizada com sucesso", "category": result["data"]}, 
+        status=200
+    )
 
 @routes.delete("/categories/{category_id}")
 @require_role(["admin"])
@@ -134,10 +152,14 @@ async def delete_category(request: web.Request) -> web.Response:
     """
     category_id = request.match_info.get("category_id")
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Category).where(Category.id == category_id))
-    category = result.scalar()
-    if not category:
-        return web.json_response({"error": "Categoria não encontrada"}, status=404)
-    await db.delete(category)
-    await db.commit()
+
+    category_service = CategoryService(db)
+    result = await category_service.delete_category(category_id)
+    
+    if not result["success"]:
+        # Verificar se o erro é devido a produtos vinculados à categoria
+        if "produtos associados" in result["error"]:
+            return web.json_response({"error": result["error"]}, status=400)
+        return web.json_response({"error": result["error"]}, status=404)
+    
     return web.json_response({"message": "Categoria deletada com sucesso"}, status=200)

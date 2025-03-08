@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\views\categories_views.py
+# D:\#3xDigital\app\views\products_views.py
 
 """
 products_views.py
@@ -11,17 +11,19 @@ Endpoints:
     POST /products: Cria um novo produto – somente admin.
     PUT /products/{product_id}: Atualiza um produto existente – somente admin.
     DELETE /products/{product_id}: Deleta um produto – somente admin.
+    
+Dependências:
+    - AIOHTTP para manipulação de requisições.
+    - ProductService para lógica de negócios de produtos.
+    - Middleware de autenticação para proteção dos endpoints.
 """
 
 import os
-import time
-import aiofiles
-
 from aiohttp import web
-from sqlalchemy import select
 from app.models.database import Product, Category
 from app.config.settings import DB_SESSION_KEY
 from app.middleware.authorization_middleware import require_role
+from app.services.product_service import ProductService
 
 routes = web.RouteTableDef()
 
@@ -35,18 +37,20 @@ async def list_products(request: web.Request) -> web.Response:
         web.Response: Resposta JSON contendo a lista de produtos.
     """
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Product))
-    products = result.scalars().all()
-    products_list = [{
-        "id": p.id,
-        "name": p.name,
-        "description": p.description,
-        "price": p.price,
-        "stock": p.stock,
-        "category_id": p.category_id,
-        "image_url": p.image_url
-    } for p in products]
-    return web.json_response({"products": products_list}, status=200)
+    category_id = request.rel_url.query.get("category_id")
+    
+    # Usar ProductService em vez de acessar o banco diretamente
+    product_service = ProductService(db)
+    
+    if category_id:
+        try:
+            category_id = int(category_id)
+        except ValueError:
+            return web.json_response({"error": "ID de categoria inválido"}, status=400)
+            
+    result = await product_service.list_products(category_id)
+    
+    return web.json_response({"products": result["data"]}, status=200)
 
 @routes.get("/products/{product_id}")
 @require_role(["admin", "user", "affiliate"])
@@ -62,20 +66,15 @@ async def get_product(request: web.Request) -> web.Response:
     """
     product_id = request.match_info.get("product_id")
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Product).where(Product.id == product_id))
-    product = result.scalar()
-    if not product:
-        return web.json_response({"error": "Produto não encontrado"}, status=404)
-    product_data = {
-        "id": product.id,
-        "name": product.name,
-        "description": product.description,
-        "price": product.price,
-        "stock": product.stock,
-        "category_id": product.category_id,
-        "image_url": product.image_url
-    }
-    return web.json_response({"product": product_data}, status=200)
+    
+    # Usar ProductService em vez de acessar o banco diretamente
+    product_service = ProductService(db)
+    result = await product_service.get_product(product_id)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=404)
+    
+    return web.json_response({"product": result["data"]}, status=200)
 
 @routes.post("/products")
 @require_role(["admin"])
@@ -103,14 +102,17 @@ async def create_product(request: web.Request) -> web.Response:
         web.Response: Resposta JSON com a mensagem de sucesso e os dados do produto criado.
     """
     db = request.app[DB_SESSION_KEY]
+    product_service = ProductService(db)
+    
     if request.content_type.startswith("multipart/"):
+        # Processamento de formulário multipart
         reader = await request.multipart()
         name = None
         description = ""
         price = None
         stock = None
         category_id = None
-        image_url = None
+        image_file = None
 
         while True:
             field = await reader.next()
@@ -138,23 +140,23 @@ async def create_product(request: web.Request) -> web.Response:
                     except ValueError:
                         return web.json_response({"error": "Valor inválido para 'category_id'"}, status=400)
             elif field.name == "image":
-                filename = field.filename
-                if filename:
-                    upload_dir = os.path.join("static", "uploads")
-                    os.makedirs(upload_dir, exist_ok=True)
-                    timestamp = int(time.time())
-                    safe_filename = f"{timestamp}_{filename}"
-                    file_path = os.path.join(upload_dir, safe_filename)
-                    async with aiofiles.open(file_path, 'wb') as f:
-                        while True:
-                            chunk = await field.read_chunk()
-                            if not chunk:
-                                break
-                            await f.write(chunk)
-                    image_url = f"/static/uploads/{safe_filename}"
+                if field.filename:
+                    image_file = field  # Guarda a referência ao campo para processar depois
+                
         if not name or price is None or stock is None:
             return web.json_response({"error": "Campos obrigatórios ausentes"}, status=400)
+            
+        # Criar produto usando o service
+        result = await product_service.create_product(
+            name=name,
+            description=description,
+            price=price,
+            stock=stock,
+            category_id=category_id,
+            image_file=image_file
+        )
     else:
+        # Processamento JSON
         try:
             data = await request.json()
             name = data["name"]
@@ -168,33 +170,25 @@ async def create_product(request: web.Request) -> web.Response:
         except (ValueError, TypeError):
             return web.json_response({"error": "Dados inválidos para 'price' ou 'stock'"}, status=400)
 
-    if category_id is not None:
-        result = await db.execute(select(Category).where(Category.id == category_id))
-        category = result.scalar()
-        if not category:
-            return web.json_response({"error": "Categoria não encontrada"}, status=404)
-
-    new_product = Product(
-        name=name,
-        description=description,
-        price=price,
-        stock=stock,
-        category_id=category_id,
-        image_url=image_url
+        # Criar produto usando o service
+        result = await product_service.create_product(
+            name=name,
+            description=description,
+            price=price,
+            stock=stock,
+            category_id=category_id,
+            image_url=image_url
+        )
+    
+    # Processar resultado da operação    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, 
+                              status=404 if "não encontrada" in result["error"] else 400)
+    
+    return web.json_response(
+        {"message": "Produto criado com sucesso", "product": result["data"]}, 
+        status=201
     )
-    db.add(new_product)
-    await db.commit()
-    await db.refresh(new_product)
-    product_data = {
-        "id": new_product.id,
-        "name": new_product.name,
-        "description": new_product.description,
-        "price": new_product.price,
-        "stock": new_product.stock,
-        "category_id": new_product.category_id,
-        "image_url": new_product.image_url
-    }
-    return web.json_response({"message": "Produto criado com sucesso", "product": product_data}, status=201)
 
 @routes.put("/products/{product_id}")
 @require_role(["admin"])
@@ -222,15 +216,18 @@ async def update_product(request: web.Request) -> web.Response:
     """
     product_id = request.match_info.get("product_id")
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Product).where(Product.id == product_id))
-    product = result.scalar()
-    if not product:
-        return web.json_response({"error": "Produto não encontrado"}, status=404)
-
+    product_service = ProductService(db)
+    
+    # Verificar primeiro se o produto existe
+    product_result = await product_service.get_product(product_id)
+    if not product_result["success"]:
+        return web.json_response({"error": product_result["error"]}, status=404)
+    
+    # Processar formulário multipart ou JSON
     if request.content_type.startswith("multipart/"):
         reader = await request.multipart()
         updated_fields = {}
-        new_image_url = None
+        image_file = None
 
         while True:
             field = await reader.next()
@@ -251,72 +248,37 @@ async def update_product(request: web.Request) -> web.Response:
                 except ValueError:
                     return web.json_response({"error": "Valor inválido para 'stock'"}, status=400)
             elif field.name == "category_id":
-                try:
-                    updated_fields["category_id"] = int(await field.text())
-                except ValueError:
-                    return web.json_response({"error": "Valor inválido para 'category_id'"}, status=400)
+                category_text = await field.text()
+                if category_text:
+                    try:
+                        updated_fields["category_id"] = int(category_text)
+                    except ValueError:
+                        return web.json_response({"error": "Valor inválido para 'category_id'"}, status=400)
             elif field.name == "image":
-                filename = field.filename
-                if filename:
-                    upload_dir = os.path.join("static", "uploads")
-                    os.makedirs(upload_dir, exist_ok=True)
-                    timestamp = int(time.time())
-                    safe_filename = f"{timestamp}_{filename}"
-                    file_path = os.path.join(upload_dir, safe_filename)
-                    async with aiofiles.open(file_path, 'wb') as f:
-                        while True:
-                            chunk = await field.read_chunk()
-                            if not chunk:
-                                break
-                            await f.write(chunk)
-                    new_image_url = f"/static/uploads/{safe_filename}"
-        if "category_id" in updated_fields:
-            result = await db.execute(select(Category).where(Category.id == updated_fields["category_id"]))
-            category = result.scalar()
-            if not category:
-                return web.json_response({"error": "Categoria não encontrada"}, status=404)
-        for key, value in updated_fields.items():
-            setattr(product, key, value)
-        if new_image_url is not None:
-            product.image_url = new_image_url
-    else:
-        data = await request.json()
-        if "name" in data:
-            product.name = data["name"]
-        if "description" in data:
-            product.description = data["description"]
-        if "price" in data:
-            try:
-                product.price = float(data["price"])
-            except (ValueError, TypeError):
-                return web.json_response({"error": "Valor de 'price' inválido"}, status=400)
-        if "stock" in data:
-            try:
-                product.stock = int(data["stock"])
-            except (ValueError, TypeError):
-                return web.json_response({"error": "Valor de 'stock' inválido"}, status=400)
-        if "category_id" in data:
-            category_id = data["category_id"]
-            result = await db.execute(select(Category).where(Category.id == category_id))
-            category = result.scalar()
-            if not category:
-                return web.json_response({"error": "Categoria não encontrada"}, status=404)
-            product.category_id = category_id
-        if "image_url" in data:
-            product.image_url = data["image_url"]
+                if field.filename:
+                    image_file = field
+                    updated_fields["image_file"] = field
 
-    await db.commit()
-    await db.refresh(product)
-    updated_data = {
-        "id": product.id,
-        "name": product.name,
-        "description": product.description,
-        "price": product.price,
-        "stock": product.stock,
-        "category_id": product.category_id,
-        "image_url": product.image_url
-    }
-    return web.json_response({"message": "Produto atualizado com sucesso", "product": updated_data}, status=200)
+        # Atualizar usando o service
+        if image_file:
+            updated_fields["image_file"] = image_file
+        result = await product_service.update_product(product_id, **updated_fields)
+    else:
+        # Processamento JSON
+        try:
+            data = await request.json()
+            result = await product_service.update_product(product_id, **data)
+        except ValueError:
+            return web.json_response({"error": "Dados inválidos no JSON"}, status=400)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, 
+                              status=404 if "não encontrado" in result["error"] else 400)
+    
+    return web.json_response(
+        {"message": "Produto atualizado com sucesso", "product": result["data"]}, 
+        status=200
+    )
 
 @routes.delete("/products/{product_id}")
 @require_role(["admin"])
@@ -332,10 +294,47 @@ async def delete_product(request: web.Request) -> web.Response:
     """
     product_id = request.match_info.get("product_id")
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Product).where(Product.id == product_id))
-    product = result.scalar()
-    if not product:
-        return web.json_response({"error": "Produto não encontrado"}, status=404)
-    await db.delete(product)
-    await db.commit()
+    
+    # Usar ProductService em vez de acessar o banco diretamente
+    product_service = ProductService(db)
+    result = await product_service.delete_product(product_id)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=404)
+    
     return web.json_response({"message": "Produto deletado com sucesso"}, status=200)
+
+@routes.put("/products/{product_id}/stock")
+@require_role(["admin"])
+async def update_product_stock(request: web.Request) -> web.Response:
+    """
+    Atualiza o estoque de um produto.
+    
+    JSON de entrada:
+        {
+            "stock": 50
+        }
+        
+    Returns:
+        web.Response: Resposta JSON com mensagem de sucesso e os dados atualizados do produto.
+    """
+    product_id = request.match_info.get("product_id")
+    db = request.app[DB_SESSION_KEY]
+    
+    try:
+        data = await request.json()
+        new_stock = int(data.get("stock", 0))
+    except (ValueError, TypeError):
+        return web.json_response({"error": "Valor de estoque inválido"}, status=400)
+    
+    # Usar ProductService em vez de acessar o banco diretamente
+    product_service = ProductService(db)
+    result = await product_service.update_stock(product_id, new_stock)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=404)
+    
+    return web.json_response(
+        {"message": "Estoque atualizado com sucesso", "product": result["data"]}, 
+        status=200
+    )

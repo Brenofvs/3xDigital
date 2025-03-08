@@ -25,6 +25,8 @@ from app.views.categories_views import routes as categories_routes
 from app.views.products_views import routes as products_routes
 from app.views.orders_views import routes as orders_routes
 from app.views.affiliates_views import routes as affiliates_routes
+from app.views.finance_views import routes as finance_routes
+from app.views.users_views import routes as users_routes
 from app.config.settings import DATABASE_URL, DB_SESSION_KEY
 
 async def init_app():
@@ -54,6 +56,8 @@ async def init_app():
     app.add_routes(products_routes)
     app.add_routes(orders_routes)
     app.add_routes(affiliates_routes)
+    app.add_routes(finance_routes)
+    app.add_routes(users_routes)
 
     return app
 

@@ -52,7 +52,14 @@ DB_SESSION_KEY = web.AppKey[AsyncSession]("db_session")
 web.AppKey[AsyncSession]: Chave para armazenar e recuperar a sessão de banco de dados na aplicação AIOHTTP.
 """
 
-TIMEZONE = datetime.now(ZoneInfo("America/Sao_Paulo"))
+def get_current_timezone():
+    """Retorna o datetime atual no fuso horário de São Paulo"""
+    return datetime.now(ZoneInfo("America/Sao_Paulo"))
+
+# Usamos uma função lambda para evitar chamar get_current_timezone() na definição
+# e sim apenas quando o SQLAlchemy precisar do valor (lazy evaluation)
+TIMEZONE = lambda: datetime.now(ZoneInfo("America/Sao_Paulo"))
 """
-datetime: Objeto de data e hora configurado para o fuso horário "America/Sao_Paulo".
+function: Função que retorna o datetime atual no fuso horário "America/Sao_Paulo".
+Usada para valores default e onupdate nos modelos SQLAlchemy.
 """

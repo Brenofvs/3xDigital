@@ -27,8 +27,7 @@ Funções:
 from aiohttp import web
 from app.services.auth_service import AuthService
 from app.middleware.authorization_middleware import require_role
-from app.models.database import get_session_maker, get_async_engine
-from app.config.settings import DATABASE_URL, DB_SESSION_KEY
+from app.config.settings import DB_SESSION_KEY
 
 routes = web.RouteTableDef()
 
@@ -128,19 +127,22 @@ async def login_user(request: web.Request):
     Returns:
         web.Response: Resposta JSON contendo o token de acesso ou erro de autenticação.
     """
-    data = await request.json()
-    session = request.app[DB_SESSION_KEY]
-    auth_service = AuthService(session)
+    try:
+        data = await request.json()
+        session = request.app[DB_SESSION_KEY]
+        auth_service = AuthService(session)
 
-    identifier = data.get("identifier")  # Pode ser email ou CPF
-    password = data.get("password")
-    
-    user = await auth_service.authenticate_user(identifier, password)
-    if not user:
-        return web.json_response({"error": "Credenciais inválidas"}, status=401)
+        identifier = data.get("identifier")  # Pode ser email ou CPF
+        password = data.get("password")
+        
+        user = await auth_service.authenticate_user(identifier, password)
+        if not user:
+            return web.json_response({"error": "Credenciais inválidas"}, status=401)
 
-    token = auth_service.generate_jwt_token(user)
-    return web.json_response({"access_token": token}, status=200)
+        token = auth_service.generate_jwt_token(user)
+        return web.json_response({"access_token": token}, status=200)
+    except Exception as e:
+        return web.json_response({"error": f"Erro interno: {str(e)}"}, status=500)
 
 @routes.post("/auth/logout")
 async def logout_user(request: web.Request):

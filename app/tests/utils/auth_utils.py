@@ -22,11 +22,14 @@ from app.config.settings import DB_SESSION_KEY
 
 async def wait_for_token(client, identifier, password, max_wait=10):
     """
-    Tenta obter o token de acesso repetidamente por até `max_wait` segundos.
+    Tenta fazer login repetidamente até obter um token JWT válido ou atingir o tempo máximo.
+
+    Útil para testar cenários em que o usuário acabou de ser criado e pode haver um pequeno
+    atraso até que o registro esteja disponível para autenticação.
 
     Args:
-        client: Cliente de teste configurado para a aplicação AIOHTTP.
-        identifier (str): Identificador do usuário (e-mail em minúsculas).
+        client (TestClient): Cliente de teste para realizar as requisições.
+        identifier (str): Identificador do usuário (email ou CPF).
         password (str): Senha do usuário.
         max_wait (int, opcional): Tempo máximo de espera, em segundos (padrão 10).
 
@@ -36,15 +39,21 @@ async def wait_for_token(client, identifier, password, max_wait=10):
     start = time.monotonic()
     token = None
     while time.monotonic() - start < max_wait:
-        await asyncio.sleep(0.5)
-        login_resp = await client.post("/auth/login", json={
-            "identifier": identifier,
-            "password": password
-        })
-        login_data = await login_resp.json()
-        if "access_token" in login_data:
-            token = login_data["access_token"]
-            break
+        try:
+            login_resp = await client.post("/auth/login", json={
+                "identifier": identifier,
+                "password": password
+            })
+            if login_resp.status == 200:
+                login_data = await login_resp.json()
+                if "access_token" in login_data:
+                    token = login_data["access_token"]
+                    break
+            # Espera um pouco antes de tentar novamente
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            print(f"Erro ao tentar login: {str(e)}")
+            await asyncio.sleep(0.5)
     return token
 
 async def get_admin_token(client):

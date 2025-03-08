@@ -3,6 +3,7 @@ documentos/
 prompt.txt
 test_api.py
 frontend/
+diff.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

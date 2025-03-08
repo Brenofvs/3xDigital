@@ -21,16 +21,14 @@ Regras de Negócio:
 
 Dependências:
     - AIOHTTP para manipulação de requisições.
-    - SQLAlchemy assíncrono para interagir com o banco de dados.
+    - AffiliateService para lógica de negócios de afiliados.
     - Middleware de autenticação para proteção dos endpoints.
 """
 
-import uuid
 from aiohttp import web
-from sqlalchemy import select
-from app.models.database import Affiliate, Sale
 from app.config.settings import DB_SESSION_KEY
 from app.middleware.authorization_middleware import require_role
+from app.services.affiliate_service import AffiliateService
 
 routes = web.RouteTableDef()
 
@@ -48,15 +46,16 @@ async def get_affiliate_link(request: web.Request) -> web.Response:
     """
     user = request["user"]
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Affiliate).where(Affiliate.user_id == user["id"]))
-    affiliate = result.scalar()
-    if not affiliate:
-        return web.json_response({"error": "Afiliado não encontrado."}, status=404)
-    if affiliate.request_status != 'approved':
-        return web.json_response({"error": "Afiliado inativo. Solicitação pendente ou rejeitada."}, status=403)
+    
+    affiliate_service = AffiliateService(db)
     base_url = str(request.url.with_path("").with_query({}))
-    link = f"{base_url}/?ref={affiliate.referral_code}"
-    return web.json_response({"affiliate_link": link}, status=200)
+    result = await affiliate_service.get_affiliate_link(user["id"], base_url)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, 
+                                status=404 if "não encontrado" in result["error"] else 403)
+    
+    return web.json_response({"affiliate_link": result["data"]}, status=200)
 
 @routes.get("/affiliates/sales")
 @require_role(["affiliate"])
@@ -71,18 +70,15 @@ async def get_affiliate_sales(request: web.Request) -> web.Response:
     """
     user = request["user"]
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Affiliate).where(Affiliate.user_id == user["id"]))
-    affiliate = result.scalar()
-    if not affiliate:
-        return web.json_response({"error": "Afiliado não encontrado."}, status=404)
-    if affiliate.request_status != 'approved':
-        return web.json_response({"error": "Afiliado inativo. Solicitação pendente ou rejeitada."}, status=403)
-    result = await db.execute(
-        select(Sale).join(Affiliate).where(Affiliate.user_id == user["id"])
-    )
-    sales = result.scalars().all()
-    sales_list = [{"order_id": sale.order_id, "commission": sale.commission} for sale in sales]
-    return web.json_response({"sales": sales_list}, status=200)
+    
+    affiliate_service = AffiliateService(db)
+    result = await affiliate_service.get_affiliate_sales(user["id"])
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, 
+                                status=404 if "não encontrado" in result["error"] else 403)
+    
+    return web.json_response({"sales": result["data"]}, status=200)
 
 @routes.post("/affiliates/request")
 @require_role(["user"])
@@ -104,26 +100,20 @@ async def request_affiliation(request: web.Request) -> web.Response:
     """
     user = request["user"]
     db = request.app[DB_SESSION_KEY]
-    # Verifica se já existe registro de afiliação para o usuário
-    result = await db.execute(select(Affiliate).where(Affiliate.user_id == user["id"]))
-    existing = result.scalar()
-    if existing:
-        return web.json_response({"error": "Solicitação de afiliação já existente."}, status=400)
-    # Gera um código de referência único
-    referral_code = f"REF{uuid.uuid4().hex[:8].upper()}"
     data = await request.json()
     commission_rate = data.get("commission_rate", 0.05)
-    new_affiliate = Affiliate(
-        user_id=user["id"],
-        referral_code=referral_code,
-        commission_rate=commission_rate,
-        request_status='pending'
-    )
-    db.add(new_affiliate)
-    await db.commit()
-    await db.refresh(new_affiliate)
+    
+    affiliate_service = AffiliateService(db)
+    result = await affiliate_service.request_affiliation(user["id"], commission_rate)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=400)
+    
     return web.json_response(
-        {"message": "Solicitação de afiliação registrada com sucesso.", "referral_code": new_affiliate.referral_code},
+        {
+            "message": "Solicitação de afiliação registrada com sucesso.",
+            "referral_code": result["data"]["referral_code"]
+        },
         status=201
     )
 
@@ -147,15 +137,13 @@ async def update_affiliate(request: web.Request) -> web.Response:
     affiliate_id = request.match_info.get("affiliate_id")
     data = await request.json()
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Affiliate).where(Affiliate.id == affiliate_id))
-    affiliate = result.scalar()
-    if not affiliate:
-        return web.json_response({"error": "Afiliado não encontrado."}, status=404)
-    if "commission_rate" in data:
-        affiliate.commission_rate = data["commission_rate"]
-    if "request_status" in data:
-        affiliate.request_status = data["request_status"]
-    await db.commit()
+    
+    affiliate_service = AffiliateService(db)
+    result = await affiliate_service.update_affiliate(affiliate_id, **data)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=404)
+    
     return web.json_response({"message": "Dados do afiliado atualizados com sucesso."}, status=200)
 
 
@@ -169,10 +157,8 @@ async def list_affiliate_requests(request: web.Request) -> web.Response:
         web.Response: JSON contendo a lista de solicitações de afiliação.
     """
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Affiliate).where(Affiliate.request_status == 'pending'))
-    affiliates = result.scalars().all()
-    affiliates_list = [
-        {"id": a.id, "user_id": a.user_id, "referral_code": a.referral_code, "commission_rate": a.commission_rate}
-        for a in affiliates
-    ]
-    return web.json_response({"affiliate_requests": affiliates_list}, status=200)
+    
+    affiliate_service = AffiliateService(db)
+    result = await affiliate_service.list_affiliate_requests()
+    
+    return web.json_response({"affiliate_requests": result["data"]}, status=200)

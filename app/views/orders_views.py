@@ -22,15 +22,15 @@ Regras de Negócio:
 
 Dependências:
     - AIOHTTP para manipulação de requisições.
-    - SQLAlchemy assíncrono para interagir com o banco de dados.
+    - OrderService para lógica de negócios de pedidos.
     - Middleware de autenticação para proteção dos endpoints.
 """
 
 from aiohttp import web
-from sqlalchemy import select
 from app.models.database import Order, OrderItem, Product, Affiliate, Sale
 from app.config.settings import DB_SESSION_KEY
 from app.middleware.authorization_middleware import require_role
+from app.services.order_service import OrderService
 
 routes = web.RouteTableDef()
 
@@ -64,9 +64,6 @@ async def create_order(request: web.Request) -> web.Response:
     data = await request.json()
     items = data.get("items", [])
 
-    if not items:
-        return web.json_response({"error": "O pedido deve conter pelo menos um item."}, status=400)
-
     # Obter dados do usuário autenticado (injetados pelo middleware)
     try:
         user_id = request["user"]["id"]
@@ -74,53 +71,22 @@ async def create_order(request: web.Request) -> web.Response:
         return web.json_response({"error": "Dados do usuário não encontrados na requisição."}, status=401)
 
     db = request.app[DB_SESSION_KEY]
-
-    total = 0
-    order_items = []
-
-    for item in items:
-        product_id = item["product_id"]
-        quantity = item["quantity"]
-
-        # Verifica se o produto existe e tem estoque suficiente
-        result = await db.execute(select(Product).where(Product.id == product_id))
-        product = result.scalar()
-        if not product:
-            return web.json_response({"error": f"Produto ID {product_id} não encontrado."}, status=404)
-        if product.stock < quantity:
-            return web.json_response({"error": f"Estoque insuficiente para o produto ID {product_id}."}, status=400)
-
-        # Atualiza estoque e calcula total do pedido
-        product.stock -= quantity
-        total += product.price * quantity
-
-        order_items.append(OrderItem(product_id=product_id, quantity=quantity, price=product.price))
-
-    # Cria o pedido
-    new_order = Order(user_id=user_id, status="processing", total=total)
-    db.add(new_order)
-    await db.commit()
-    await db.refresh(new_order)
-
-    # Associa os itens ao pedido
-    for order_item in order_items:
-        order_item.order_id = new_order.id
-        db.add(order_item)
-    await db.commit()
-
-    # Se for enviado um código de afiliado, registra a venda e calcula a comissão
+    
+    # Usar OrderService em vez de acessar o banco diretamente
+    order_service = OrderService(db)
     ref_code = request.rel_url.query.get("ref")
-    if ref_code:
-        result = await db.execute(select(Affiliate).where(Affiliate.referral_code == ref_code))
-        affiliate = result.scalar()
-        if affiliate:
-            commission = total * affiliate.commission_rate
-            sale = Sale(affiliate_id=affiliate.id, order_id=new_order.id, commission=commission)
-            db.add(sale)
-            await db.commit()
-
+    
+    result = await order_service.create_order(user_id, items, ref_code)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=400)
+    
     return web.json_response(
-        {"message": "Pedido criado com sucesso!", "order_id": new_order.id, "total": total},
+        {
+            "message": "Pedido criado com sucesso!", 
+            "order_id": result["data"]["order_id"], 
+            "total": result["data"]["total"]
+        },
         status=201
     )
 
@@ -137,12 +103,12 @@ async def list_orders(request: web.Request) -> web.Response:
     Apenas administradores podem visualizar todos os pedidos.
     """
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Order))
-    orders = result.scalars().all()
-
-    orders_list = [{"id": o.id, "user_id": o.user_id, "status": o.status, "total": o.total} for o in orders]
     
-    return web.json_response({"orders": orders_list}, status=200)
+    # Usar OrderService em vez de acessar o banco diretamente
+    order_service = OrderService(db)
+    result = await order_service.list_orders()
+    
+    return web.json_response({"orders": result["data"]}, status=200)
 
 
 @routes.get("/orders/{order_id}")
@@ -161,28 +127,20 @@ async def get_order(request: web.Request) -> web.Response:
     Administradores podem visualizar qualquer pedido.
     """
     order_id = request.match_info.get("order_id")
+    user = request["user"]
+    is_admin = user["role"] == "admin"
+    user_id = user["id"]
     db = request.app[DB_SESSION_KEY]
 
-    result = await db.execute(select(Order).where(Order.id == order_id))
-    order = result.scalar()
-
-    if not order:
-        return web.json_response({"error": "Pedido não encontrado."}, status=404)
-
-    # Permitir que usuários visualizem apenas seus próprios pedidos
-    user_role = request["user"]["role"]
-    if user_role != "admin" and request["user"]["id"] != order.user_id:
-        return web.json_response({"error": "Acesso negado."}, status=403)
-
-    order_data = {
-        "id": order.id,
-        "user_id": order.user_id,
-        "status": order.status,
-        "total": order.total,
-        "items": [{"product_id": i.product_id, "quantity": i.quantity, "price": i.price} for i in order.items]
-    }
-
-    return web.json_response({"order": order_data}, status=200)
+    # Usar OrderService em vez de acessar o banco diretamente
+    order_service = OrderService(db)
+    result = await order_service.get_order(order_id, user_id, is_admin)
+    
+    if not result["success"]:
+        status = 403 if result["error"] == "Acesso negado." else 404
+        return web.json_response({"error": result["error"]}, status=status)
+    
+    return web.json_response({"order": result["data"]}, status=200)
 
 
 @routes.put("/orders/{order_id}/status")
@@ -204,21 +162,20 @@ async def update_order_status(request: web.Request) -> web.Response:
     order_id = request.match_info.get("order_id")
     data = await request.json()
     new_status = data.get("status")
-
-    valid_statuses = ["processing", "shipped", "delivered", "returned"]
-    if new_status not in valid_statuses:
-        return web.json_response({"error": "Status inválido."}, status=400)
-
     db = request.app[DB_SESSION_KEY]
-    result = await db.execute(select(Order).where(Order.id == order_id))
-    order = result.scalar()
-
-    if not order:
-        return web.json_response({"error": "Pedido não encontrado."}, status=404)
-
-    order.status = new_status
-    await db.commit()
-    return web.json_response({"message": f"Status do pedido atualizado para '{new_status}'"}, status=200)
+    
+    # Usar OrderService em vez de acessar o banco diretamente
+    order_service = OrderService(db)
+    result = await order_service.update_order_status(order_id, new_status)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, 
+                               status=400 if "inválido" in result["error"] else 404)
+    
+    return web.json_response(
+        {"message": f"Status do pedido atualizado para '{new_status}'"},
+        status=200
+    )
 
 
 @routes.delete("/orders/{order_id}")
@@ -234,14 +191,12 @@ async def delete_order(request: web.Request) -> web.Response:
     """
     order_id = request.match_info.get("order_id")
     db = request.app[DB_SESSION_KEY]
-
-    result = await db.execute(select(Order).where(Order.id == order_id))
-    order = result.scalar()
-
-    if not order:
-        return web.json_response({"error": "Pedido não encontrado."}, status=404)
-
-    await db.delete(order)
-    await db.commit()
-
+    
+    # Usar OrderService em vez de acessar o banco diretamente
+    order_service = OrderService(db)
+    result = await order_service.delete_order(order_id)
+    
+    if not result["success"]:
+        return web.json_response({"error": result["error"]}, status=404)
+    
     return web.json_response({"message": "Pedido deletado com sucesso."}, status=200)

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.database import User
-from app.config.settings import JWT_SECRET_KEY, TIMEZONE
+from app.config.settings import JWT_SECRET_KEY, TIMEZONE, get_current_timezone
 
 class AuthService:
     """
@@ -112,7 +112,7 @@ class AuthService:
         Returns:
             str: Token JWT gerado.
         """
-        expires = TIMEZONE + timedelta(hours=1)
+        expires = TIMEZONE() + timedelta(hours=1)
         payload = {
             "sub": str(user.id),
             "role": user.role,
@@ -135,7 +135,13 @@ class AuthService:
             ValueError: Se o token for inválido ou expirado.
         """
         try:
-            decoded = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
+            # Configuramos o algoritmo e verificamos a expiração
+            decoded = jwt.decode(
+                token, 
+                JWT_SECRET_KEY, 
+                algorithms=["HS256"],
+                options={"verify_exp": True}
+            )
             return decoded
         except jwt.ExpiredSignatureError:
             raise ValueError("Token expirado.")
