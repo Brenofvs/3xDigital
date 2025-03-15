@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\tests\test_auth_routes.py
+# D:\3xDigital\app\tests\test_auth_routes.py
 
 """
 test_auth_routes.py

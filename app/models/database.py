@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\models\database.py
+# D:\3xDigital\app\models\database.py
 """
 database.py
 
@@ -16,6 +16,7 @@ Classes:
     Payment: Representa um pagamento realizado por um usuário.
     Log: Representa logs de ações de usuários.
     APIToken: Representa tokens de API associados a usuários.
+    ShippingAddress: Representa o endereço de entrega de um pedido.
 
 Functions:
     create_database(db_url: str) -> None:
@@ -29,9 +30,10 @@ Functions:
 """
 
 import enum
+import json
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Text, Float, Enum, DateTime, ForeignKey
+    Column, Integer, String, Text, Float, Enum, DateTime, ForeignKey, Boolean
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.asyncio import (
@@ -39,10 +41,14 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker
 )
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, composite
+from sqlalchemy.ext.hybrid import hybrid_property
 from app.config.settings import TIMEZONE
 
 Base = declarative_base()
+
+# A classe AffiliateBalance é definida em finance_models.py mas é referenciada aqui
+AffiliateBalance = None  # Será definida externamente
 
 # ========== Declaramos nossas Entidades (Models) como antes: ==========
 
@@ -54,8 +60,15 @@ class User(Base):
         id (int): ID único do usuário.
         name (str): Nome do usuário.
         email (str): Email do usuário, único.
+        cpf (str): CPF do usuário, único.
         password_hash (str): Hash da senha do usuário.
-        role (Enum): Papel do usuário (admin, manager, affiliate).
+        role (Enum): Papel do usuário (admin, manager, affiliate, user).
+        phone (str): Número de telefone do usuário.
+        address (str): Endereço do usuário.
+        active (bool): Indica se o usuário está ativo no sistema.
+        deactivation_reason (str): Razão da desativação da conta.
+        deletion_requested (bool): Indica se o usuário solicitou a exclusão da conta.
+        deletion_request_date (datetime): Data da solicitação de exclusão da conta.
         created_at (datetime): Data de criação do registro.
         updated_at (datetime): Data da última atualização do registro.
     """
@@ -66,14 +79,27 @@ class User(Base):
     cpf = Column(String(11), nullable=False, unique=True)  # Novo campo para CPF
     password_hash = Column(String(255), nullable=False)
     role = Column(Enum('admin', 'manager', 'affiliate', 'user', name='user_roles'), nullable=False)
+    phone = Column(String(20), nullable=True)  # Adicionando campo phone
+    address = Column(String(255), nullable=True)  # Adicionando campo address
     created_at = Column(DateTime, default=TIMEZONE)
     updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
+    active = Column(Boolean, default=True)  # Adicionando campo active
+    deactivation_reason = Column(String(255), nullable=True)  # Razão da desativação
+    deletion_requested = Column(Boolean, default=False)  # Flag para solicitação de exclusão
+    deletion_request_date = Column(DateTime, nullable=True)  # Data da solicitação de exclusão
 
     orders = relationship("Order", back_populates="user")
     affiliate = relationship("Affiliate", uselist=False, back_populates="user")
     payments = relationship("Payment", order_by="Payment.id", back_populates="user")
     logs = relationship("Log", order_by="Log.id", back_populates="user")
     api_tokens = relationship("APIToken", order_by="APIToken.id", back_populates="user")
+
+    @property
+    def is_active(self):
+        """
+        Propriedade que retorna se o usuário está ativo ou não.
+        """
+        return self.active
 
 
 class Category(Base):
@@ -136,7 +162,7 @@ class Order(Base):
     __tablename__ = 'orders'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete="CASCADE"), nullable=False)
-    status = Column(Enum('processing', 'shipped', 'delivered', 'returned', name='order_status'), nullable=False)
+    status = Column(Enum('processing', 'shipped', 'delivered', 'returned', 'pending', 'completed', name='order_status'), nullable=False)
     total = Column(Float, nullable=False)
     created_at = Column(DateTime, default=TIMEZONE)
     updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
@@ -144,6 +170,7 @@ class Order(Base):
     user = relationship("User", back_populates="orders")
     items = relationship("OrderItem", order_by="OrderItem.id", back_populates="order", cascade="all, delete-orphan", passive_deletes=True)
     sales = relationship("Sale", order_by="Sale.id", back_populates="order")
+    shipping_address = relationship("ShippingAddress", uselist=False, back_populates="order", cascade="all, delete-orphan")
 
 
 class OrderItem(Base):
@@ -180,22 +207,44 @@ class Affiliate(Base):
         referral_code (str): Código de referência do afiliado.
         commission_rate (float): Taxa de comissão do afiliado.
         request_status (str): Status da solicitação de afiliação, podendo ser 'pending', 'approved' ou 'blocked'.
+        payment_info (dict): Informações de pagamento do afiliado (banco, agência, conta, etc).
+        created_at (datetime): Data de criação do registro.
     """
     __tablename__ = 'affiliates'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     referral_code = Column(String(255), nullable=False, unique=True)
     commission_rate = Column(Float, nullable=False)
+    _payment_info = Column("payment_info", Text, nullable=True)  # Renomeando para _payment_info
     request_status = Column(
         Enum('pending', 'approved', 'blocked', name='affiliate_status'),
         nullable=False,
         default='pending'
     )
+    created_at = Column(DateTime, default=TIMEZONE)  # Adicionando campo de data de criação
 
     user = relationship("User", back_populates="affiliate")
     sales = relationship("Sale", order_by="Sale.id", back_populates="affiliate")
     balance = relationship("AffiliateBalance", uselist=False, back_populates="affiliate", cascade="all, delete-orphan")
-
+    
+    @property
+    def payment_info(self):
+        """
+        Desserializa o campo payment_info de texto para dicionário.
+        """
+        if self._payment_info:
+            return json.loads(self._payment_info)
+        return None
+    
+    @payment_info.setter
+    def payment_info(self, value):
+        """
+        Serializa o dicionário payment_info para texto ao salvar.
+        """
+        if value is not None:
+            self._payment_info = json.dumps(value)
+        else:
+            self._payment_info = None
 
 
 class Sale(Base):
@@ -279,6 +328,39 @@ class APIToken(Base):
     user = relationship("User", back_populates="api_tokens")
 
 
+class ShippingAddress(Base):
+    """
+    Representa o endereço de entrega de um pedido.
+
+    Attributes:
+        id (int): ID único do endereço.
+        order_id (int): ID do pedido associado.
+        street (str): Nome da rua.
+        number (str): Número do endereço.
+        complement (str): Complemento do endereço.
+        neighborhood (str): Bairro.
+        city (str): Cidade.
+        state (str): Estado.
+        zip_code (str): CEP.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
+    """
+    __tablename__ = 'shipping_addresses'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(Integer, ForeignKey('orders.id', ondelete="CASCADE"), nullable=False, unique=True)
+    street = Column(String(255), nullable=False)
+    number = Column(String(20), nullable=False)
+    complement = Column(String(255), nullable=True)
+    neighborhood = Column(String(255), nullable=True)
+    city = Column(String(255), nullable=False)
+    state = Column(String(2), nullable=False)
+    zip_code = Column(String(10), nullable=True)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
+
+    order = relationship("Order", back_populates="shipping_address")
+
+
 # ========== Métodos para criação do banco de dados de forma assíncrona ==========
 
 async def create_database(db_url: str = "sqlite+aiosqlite:///./3x_digital.db"):
@@ -321,3 +403,6 @@ def get_session_maker(engine):
         async_sessionmaker: Criador de sessões assíncronas.
     """
     return async_sessionmaker(bind=engine, expire_on_commit=False)
+
+# Importação no final para evitar referência circular
+from app.models.finance_models import AffiliateBalance

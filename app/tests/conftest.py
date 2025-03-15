@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\tests\conftest.py
+# D:\3xDigital\app\tests\conftest.py
 
 """
 conftest.py
@@ -27,49 +27,49 @@ from app.views.orders_views import routes as orders_routes
 from app.views.affiliates_views import routes as affiliates_routes
 from app.views.finance_views import routes as finance_routes
 from app.views.users_views import routes as users_routes
+from app.views.payment_views import routes as payment_routes
+from app.views.profile_views import routes as profile_routes
 
-@pytest_asyncio.fixture(scope="function", autouse=True)
-async def reset_database():
+# Usar um banco de dados em memória nomeado para ser compartilhado entre sessões
+TEST_DB_URL = "sqlite+aiosqlite:///file:memdb1?mode=memory&cache=shared&uri=true"
+
+@pytest_asyncio.fixture(scope="function")
+async def setup_database():
     """
-    Reseta o banco de dados antes e depois de cada teste.
+    Configura um banco de dados compartilhado para todas as sessões.
     
-    Remove e recria todas as tabelas, garantindo um ambiente de teste limpo.
+    Cria um único banco de dados em memória nomeado que pode ser 
+    acessado por várias sessões simultâneas.
     """
-    TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
-    engine = create_async_engine(TEST_DB_URL, echo=False)
+    # Usar um banco nomeado para compartilhar entre sessões
+    engine = create_async_engine(TEST_DB_URL, echo=False, connect_args={"check_same_thread": False})
     
+    # Cria as tabelas
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     
-    yield
+    yield engine
     
+    # Limpeza após o teste
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
     
     await engine.dispose()
 
 @pytest_asyncio.fixture(scope="function")
-async def async_db_session():
+async def async_db_session(setup_database):
     """
     Configura uma sessão de banco de dados assíncrona para testes.
 
-    Cria um banco de dados em memória utilizando SQLite, inicializa as tabelas,
-    e fornece uma sessão para os testes. Após a execução dos testes, o engine
-    do banco de dados é fechado.
+    Utiliza o banco de dados compartilhado criado pelo setup_database.
 
     Yields:
         AsyncSession: Sessão de banco de dados assíncrona configurada para testes.
     """
-    # Banco em memória para testes
-    TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
-    engine = create_async_engine(TEST_DB_URL, echo=False)
-
-    # Cria as tabelas
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
+    # Usa o engine compartilhado
+    engine = setup_database
+    
     # Cria o sessionmaker
     SessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -77,29 +77,20 @@ async def async_db_session():
     async with SessionLocal() as session:
         yield session
 
-    # Fecha o engine ao final
-    await engine.dispose()
-
 @pytest_asyncio.fixture(scope="function")
-async def test_client_fixture():
+async def test_client_fixture(setup_database):
     """
     Configura um cliente de teste para a aplicação AIOHTTP.
 
-    Cria um banco de dados em memória utilizando SQLite, inicializa as tabelas,
-    e monta a aplicação AIOHTTP para testes. Injeta uma sessão de banco de dados
-    na aplicação e fornece um cliente de teste.
+    Utiliza o banco de dados compartilhado criado pelo setup_database.
 
     Yields:
         TestClient: Cliente de teste configurado para a aplicação.
     """
-    TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
-    engine = create_async_engine(TEST_DB_URL, echo=False)
+    # Usa o engine compartilhado
+    engine = setup_database
 
-    # Cria as tabelas antes de iniciar o app
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    # Cria a sessão
+    # Cria o sessionmaker
     SessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     async_session = SessionLocal()
 
@@ -108,7 +99,7 @@ async def test_client_fixture():
     # Injeta a sessão usando a key do AIOHTTP
     app[DB_SESSION_KEY] = async_session
 
-    # Adiciona as rotas de autenticação, categorias e produtos
+    # Adiciona as rotas
     app.add_routes(auth_routes)
     app.add_routes(categories_routes)
     app.add_routes(products_routes)
@@ -116,6 +107,9 @@ async def test_client_fixture():
     app.add_routes(affiliates_routes)
     app.add_routes(finance_routes)
     app.add_routes(users_routes)
+    app.add_routes(payment_routes)
+    app.add_routes(profile_routes)
+    
     server = TestServer(app)
     client = TestClient(server)
 
@@ -123,4 +117,3 @@ async def test_client_fixture():
         yield client
 
     await async_session.close()
-    await engine.dispose()

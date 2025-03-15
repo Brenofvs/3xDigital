@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\services\finance_service.py
+# D:\3xDigital\app\services\finance_service.py
 """
 finance_service.py
 

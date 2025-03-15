@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\views\auth_views.py
+# D:\3xDigital\app\views\auth_views.py
 
 """
 auth_views.py

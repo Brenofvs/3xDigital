@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\services\user_service.py
+# D:\3xDigital\app\services\user_service.py
 """
 user_service.py
 
@@ -11,12 +11,15 @@ Funcionalidades principais:
     - Atualização de papéis (roles) de usuários
     - Bloqueio/desbloqueio de usuários
     - Redefinição de senhas
+    - Atualização de dados pessoais pelo próprio usuário
+    - Auto-gerenciamento de conta
 
 Regras de Negócio:
     - Apenas administradores podem gerenciar usuários
     - Usuários não podem alterar seus próprios papéis
     - Senhas são sempre armazenadas com hash seguro
     - Logs são gerados para operações sensíveis
+    - Usuários podem atualizar seus próprios dados pessoais
 
 Dependências:
     - SQLAlchemy para persistência
@@ -26,8 +29,8 @@ Dependências:
 
 import bcrypt
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple
-from sqlalchemy import select, func, or_, and_, not_
+from typing import List, Dict, Optional, Tuple, Any
+from sqlalchemy import select, func, or_, and_, not_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import User, Affiliate, Log
@@ -117,6 +120,12 @@ async def get_user_details(
         "email": user.email,
         "cpf": user.cpf,
         "role": user.role,
+        "phone": user.phone,
+        "address": user.address,
+        "active": user.active,
+        "deactivation_reason": user.deactivation_reason,
+        "deletion_requested": user.deletion_requested,
+        "deletion_request_date": user.deletion_request_date.isoformat() if user.deletion_request_date else None,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "updated_at": user.updated_at.isoformat() if user.updated_at else None,
         "is_affiliate": False
@@ -312,6 +321,391 @@ async def reset_user_password(
     log = Log(
         user_id=admin_id,
         action=f"Redefiniu senha do usuário {user_id}",
+        timestamp=datetime.now()
+    )
+    
+    # Salva as alterações
+    session.add(user)
+    session.add(log)
+    await session.commit()
+    
+    return True, None
+
+
+async def update_user_profile_data(
+    session: AsyncSession,
+    user_id: int,
+    update_data: Dict[str, Any]
+) -> Tuple[bool, Optional[str], Optional[Dict]]:
+    """
+    Atualiza os dados pessoais de um usuário, permitindo que o próprio usuário atualize suas informações.
+    
+    Args:
+        session (AsyncSession): Sessão do banco de dados
+        user_id (int): ID do usuário a ser atualizado
+        update_data (Dict[str, Any]): Dados a serem atualizados (name, phone, address, etc.)
+        
+    Returns:
+        Tuple[bool, Optional[str], Optional[Dict]]:
+            - Sucesso da operação
+            - Mensagem de erro (se houver)
+            - Dados atualizados do usuário
+    """
+    # Campos permitidos para atualização pelo próprio usuário
+    allowed_fields = ["name", "phone", "address", "profile_picture", "preferences"]
+    
+    # Filtra para manter apenas campos permitidos
+    filtered_data = {k: v for k, v in update_data.items() if k in allowed_fields}
+    
+    if not filtered_data:
+        return False, "Nenhum campo válido para atualização", None
+    
+    try:
+        # Busca o usuário
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            return False, "Usuário não encontrado", None
+        
+        # Atualiza os campos
+        for field, value in filtered_data.items():
+            setattr(user, field, value)
+        
+        # Cria um log da alteração
+        log = Log(
+            user_id=user_id,
+            action=f"Atualizou dados pessoais",
+            timestamp=datetime.now()
+        )
+        
+        # Salva as alterações
+        session.add(user)
+        session.add(log)
+        await session.commit()
+        await session.refresh(user)
+        
+        # Retorna os dados atualizados
+        user_data = await get_user_details(session, user_id)
+        return True, None, user_data
+        
+    except Exception as e:
+        await session.rollback()
+        return False, f"Erro ao atualizar perfil: {str(e)}", None
+
+
+async def change_password(
+    session: AsyncSession,
+    user_id: int,
+    current_password: str,
+    new_password: str
+) -> Tuple[bool, Optional[str]]:
+    """
+    Permite que um usuário altere sua própria senha, exigindo a senha atual.
+    
+    Args:
+        session (AsyncSession): Sessão do banco de dados
+        user_id (int): ID do usuário
+        current_password (str): Senha atual para verificação
+        new_password (str): Nova senha desejada
+        
+    Returns:
+        Tuple[bool, Optional[str]]:
+            - Sucesso da operação
+            - Mensagem de erro (se houver)
+    """
+    # Validação básica
+    if not new_password or len(new_password) < 6:
+        return False, "Nova senha inválida. Deve ter pelo menos 6 caracteres"
+    
+    # Busca o usuário
+    result = await session.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        return False, "Usuário não encontrado"
+    
+    # Verifica a senha atual
+    if not bcrypt.checkpw(current_password.encode('utf-8'), user.password_hash.encode('utf-8')):
+        return False, "Senha atual incorreta"
+    
+    # Gera o hash da nova senha
+    password_hash = bcrypt.hashpw(
+        new_password.encode('utf-8'),
+        bcrypt.gensalt()
+    ).decode('utf-8')
+    
+    # Atualiza a senha
+    user.password_hash = password_hash
+    
+    # Cria um log da alteração
+    log = Log(
+        user_id=user_id,
+        action="Alterou a própria senha",
+        timestamp=datetime.now()
+    )
+    
+    # Salva as alterações
+    session.add(user)
+    session.add(log)
+    await session.commit()
+    
+    return True, None
+
+
+async def update_user_email(
+    session: AsyncSession,
+    user_id: int,
+    password: str,
+    new_email: str
+) -> Tuple[bool, Optional[str]]:
+    """
+    Permite que um usuário atualize seu endereço de email.
+    
+    Args:
+        session (AsyncSession): Sessão do banco de dados
+        user_id (int): ID do usuário
+        password (str): Senha atual para verificação
+        new_email (str): Novo endereço de email
+        
+    Returns:
+        Tuple[bool, Optional[str]]:
+            - Sucesso da operação
+            - Mensagem de erro (se houver)
+    """
+    try:
+        # Validação básica de formato de email
+        if not new_email or '@' not in new_email:
+            return False, "Endereço de email inválido"
+        
+        # Busca o usuário
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            return False, "Usuário não encontrado"
+        
+        # Verifica se o usuário está ativo
+        if not user.active:
+            return False, "Conta de usuário desativada"
+        
+        # Verifica a senha
+        if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+            return False, "Senha incorreta"
+        
+        # Verifica se o novo email é igual ao atual
+        if user.email == new_email:
+            return False, "O novo email é igual ao atual"
+        
+        # Verifica se o email já está em uso
+        result = await session.execute(
+            select(User).where(User.email == new_email)
+        )
+        existing_user = result.scalar_one_or_none()
+        
+        if existing_user and existing_user.id != user_id:
+            return False, "Este email já está em uso por outro usuário"
+        
+        # Salva o email anterior para o log
+        old_email = user.email
+        
+        # Atualiza o email
+        user.email = new_email
+        
+        # Cria um log da alteração
+        log = Log(
+            user_id=user_id,
+            action=f"Alterou email de '{old_email}' para '{new_email}'",
+            timestamp=datetime.now()
+        )
+        
+        # Salva as alterações
+        session.add(user)
+        session.add(log)
+        await session.commit()
+        
+        return True, None
+    except Exception as e:
+        await session.rollback()
+        return False, f"Erro ao atualizar email: {str(e)}"
+
+
+async def deactivate_user_account(
+    session: AsyncSession,
+    user_id: int,
+    password: str,
+    reason: Optional[str] = None
+) -> Tuple[bool, Optional[str]]:
+    """
+    Permite que um usuário desative temporariamente sua própria conta.
+    
+    Args:
+        session (AsyncSession): Sessão do banco de dados
+        user_id (int): ID do usuário
+        password (str): Senha para verificação
+        reason (Optional[str]): Motivo da desativação (opcional)
+        
+    Returns:
+        Tuple[bool, Optional[str]]:
+            - Sucesso da operação
+            - Mensagem de erro (se houver)
+    """
+    try:
+        # Busca o usuário
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            return False, "Usuário não encontrado"
+        
+        # Verifica se a conta já está desativada
+        if not user.active:
+            return False, "Conta já está desativada"
+        
+        # Verifica a senha
+        if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+            return False, "Senha incorreta"
+        
+        # Define o motivo de desativação se fornecido
+        if reason:
+            user.deactivation_reason = reason
+        # Se não foi fornecido um motivo e não há motivo existente, usa o padrão
+        elif not user.deactivation_reason:
+            user.deactivation_reason = "Conta desativada pelo usuário"
+        
+        # Desativa a conta
+        user.active = False
+        
+        # Cria um log da alteração
+        log = Log(
+            user_id=user_id,
+            action="Desativou a própria conta",
+            timestamp=datetime.now()
+        )
+        
+        # Salva as alterações
+        session.add(user)
+        session.add(log)
+        await session.commit()
+        
+        return True, None
+    except Exception as e:
+        await session.rollback()
+        return False, f"Erro ao desativar conta: {str(e)}"
+
+
+async def request_account_deletion(
+    session: AsyncSession,
+    user_id: int,
+    password: str,
+    reason: Optional[str] = None
+) -> Tuple[bool, Optional[str]]:
+    """
+    Permite que um usuário solicite a exclusão definitiva de sua conta.
+    
+    Args:
+        session (AsyncSession): Sessão do banco de dados
+        user_id (int): ID do usuário
+        password (str): Senha para verificação
+        reason (Optional[str]): Motivo da solicitação de exclusão
+        
+    Returns:
+        Tuple[bool, Optional[str]]:
+            - Sucesso da operação
+            - Mensagem de erro (se houver)
+    """
+    try:
+        # Busca o usuário
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            return False, "Usuário não encontrado"
+        
+        # Verifica se já existe uma solicitação de exclusão
+        if user.deletion_requested:
+            return False, "Já existe uma solicitação de exclusão para esta conta"
+        
+        # Verifica a senha
+        if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+            return False, "Senha incorreta"
+        
+        # Marca a conta para exclusão
+        user.deletion_requested = True
+        user.deletion_request_date = datetime.now()
+        
+        # Cria um log da solicitação
+        log_message = "Solicitou exclusão de conta"
+        if reason:
+            log_message += f": {reason}"
+        
+        log = Log(
+            user_id=user_id,
+            action=log_message,
+            timestamp=datetime.now()
+        )
+        
+        # Salva as alterações
+        session.add(user)
+        session.add(log)
+        await session.commit()
+        
+        return True, None
+    except Exception as e:
+        await session.rollback()
+        return False, f"Erro ao solicitar exclusão de conta: {str(e)}"
+
+
+async def update_notification_preferences(
+    session: AsyncSession,
+    user_id: int,
+    preferences: Dict[str, bool]
+) -> Tuple[bool, Optional[str]]:
+    """
+    Atualiza as preferências de notificação do usuário.
+    
+    Args:
+        session (AsyncSession): Sessão do banco de dados
+        user_id (int): ID do usuário
+        preferences (Dict[str, bool]): Preferências de notificação
+            Exemplo: {'email_marketing': True, 'order_updates': True, 'promotions': False}
+        
+    Returns:
+        Tuple[bool, Optional[str]]:
+            - Sucesso da operação
+            - Mensagem de erro (se houver)
+    """
+    # Busca o usuário
+    result = await session.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        return False, "Usuário não encontrado"
+    
+    # Atualiza as preferências
+    current_preferences = user.notification_preferences or {}
+    
+    # Mescla as preferências existentes com as novas
+    updated_preferences = {**current_preferences, **preferences}
+    
+    user.notification_preferences = updated_preferences
+    
+    # Cria um log da alteração
+    log = Log(
+        user_id=user_id,
+        action="Atualizou preferências de notificação",
         timestamp=datetime.now()
     )
     

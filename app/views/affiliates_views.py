@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\views\affiliates_views.py
+# D:\3xDigital\app\views\affiliates_views.py
 
 """
 affiliates_views.py

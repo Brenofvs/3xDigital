@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\services\auth_service.py
+# D:\3xDigital\app\services\auth_service.py
 
 """
 auth_service.py

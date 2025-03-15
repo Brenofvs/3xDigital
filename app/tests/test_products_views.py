@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\tests\test_products_views.py
+# D:\3xDigital\app\tests\test_products_views.py
 """
 test_products_views.py
 

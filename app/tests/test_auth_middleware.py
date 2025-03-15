@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\tests\test_authorization_middleware.py
+# D:\3xDigital\app\tests\test_authorization_middleware.py
 """
 test_authorization_middleware.py
 

@@ -1,4 +1,4 @@
-# D:\#3xDigital\main.py
+# D:\3xDigital\main.py
 
 """
 main.py
@@ -27,6 +27,8 @@ from app.views.orders_views import routes as orders_routes
 from app.views.affiliates_views import routes as affiliates_routes
 from app.views.finance_views import routes as finance_routes
 from app.views.users_views import routes as users_routes
+from app.views.payment_views import routes as payment_routes
+from app.views.profile_views import routes as profile_routes
 from app.config.settings import DATABASE_URL, DB_SESSION_KEY
 
 async def init_app():
@@ -58,6 +60,8 @@ async def init_app():
     app.add_routes(affiliates_routes)
     app.add_routes(finance_routes)
     app.add_routes(users_routes)
+    app.add_routes(payment_routes)
+    app.add_routes(profile_routes)
 
     return app
 

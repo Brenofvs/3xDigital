@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\tests\test_affiliate_service.py
+# D:\3xDigital\app\tests\test_affiliate_service.py
 
 """
 test_affiliate_service.py

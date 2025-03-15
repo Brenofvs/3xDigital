@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\models\finance_models.py
+# D:\3xDigital\app\models\finance_models.py
 """
 finance_models.py
 
@@ -26,8 +26,7 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, Enum, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.orm import relationship
 
-from app.config.settings import TIMEZONE
-from app.models.database import Base
+from app.models.database import Base, Column, Integer, String, Text, Float, Enum, DateTime, ForeignKey, Boolean, relationship, TIMEZONE
 
 
 class AffiliateBalance(Base):

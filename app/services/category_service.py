@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\services\category_service.py
+# D:\3xDigital\app\services\category_service.py
 """
 category_service.py
 

@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\config\settings.py
+# D:\3xDigital\app\config\settings.py
 
 """
 settings.py

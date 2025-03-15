@@ -1,4 +1,4 @@
-# D:\#3xDigital\app\tests\test_finance_views.py
+# D:\3xDigital\app\tests\test_finance_views.py
 """
 test_finance_views.py
 
