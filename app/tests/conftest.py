@@ -18,6 +18,7 @@ from app.models.database import Base
 from aiohttp import web
 from aiohttp.test_utils import TestServer, TestClient
 from app.config.settings import DB_SESSION_KEY
+import pytest
 
 # Importa os módulos de rotas
 from app.views.auth_views import routes as auth_routes
@@ -117,3 +118,61 @@ async def test_client_fixture(setup_database):
         yield client
 
     await async_session.close()
+
+@pytest.fixture
+def mock_payment_gateways(monkeypatch):
+    """
+    Fixture que substitui temporariamente os gateways de pagamento por mocks.
+    
+    Esta fixture modifica o comportamento da factory para retornar
+    implementações de teste dos gateways, o que facilita a realização
+    de testes sem dependências externas.
+    
+    Args:
+        monkeypatch: Fixture do pytest para modificar objetos temporariamente.
+        
+    Returns:
+        dict: Dicionário com os mocks de gateway.
+    """
+    from unittest import mock
+    from app.services.payment.gateway_factory import PaymentGatewayFactory
+    import asyncio
+    
+    # Cria mocks para os diferentes gateways
+    mock_stripe = mock.MagicMock()
+    mock_mp = mock.MagicMock()
+    
+    # Configura o comportamento padrão dos mocks como coroutines
+    # Stripe
+    mock_stripe.get_gateway_config = mock.AsyncMock(return_value=(True, None, {"gateway_name": "stripe", "api_key": "test_key"}))
+    mock_stripe.create_payment = mock.AsyncMock(return_value=(True, None, {"payment_id": "test_stripe_payment", "status": "pending"}))
+    mock_stripe.process_webhook = mock.AsyncMock(return_value=(True, None, {"transaction_id": "test_stripe_transaction", "status": "approved"}))
+    mock_stripe.initialize_client = mock.AsyncMock(return_value=(True, None, {"client": "test_stripe_client"}))
+    
+    # Mercado Pago
+    mock_mp.get_gateway_config = mock.AsyncMock(return_value=(True, None, {"gateway_name": "mercado_pago", "api_key": "test_mp_key"}))
+    mock_mp.create_payment = mock.AsyncMock(return_value=(True, None, {"payment_id": "test_mp_payment", "status": "pending"}))
+    mock_mp.process_webhook = mock.AsyncMock(return_value=(True, None, {"transaction_id": "test_mp_transaction", "status": "approved"}))
+    mock_mp.initialize_client = mock.AsyncMock(return_value=(True, None, {"client": "test_mp_client"}))
+    
+    # Função mock para get_gateway
+    def mock_get_gateway(gateway_name):
+        if gateway_name.lower() == "stripe":
+            return mock_stripe
+        elif gateway_name.lower() == "mercado_pago":
+            return mock_mp
+        else:
+            raise ValueError(f"Gateway não suportado: {gateway_name}")
+    
+    # Substitui a função get_gateway da factory pelo nosso mock
+    monkeypatch.setattr(PaymentGatewayFactory, "get_gateway", mock_get_gateway)
+    
+    # Retorna os mocks para uso nos testes
+    return {"stripe": mock_stripe, "mercado_pago": mock_mp}
+
+# Fixtures que foram importadas do arquivo conftest.py da pasta payment
+# Estas fixtures foram movidas para cá para unificar todos os testes em uma única estrutura
+# e evitar conflitos de importação e coleta do pytest
+
+# Nota: A fixture mercadopago_gateway já foi movida diretamente para o arquivo test_mercadopago_gateway.py
+# para evitar duplicidade de código, já que era usada apenas naquele arquivo

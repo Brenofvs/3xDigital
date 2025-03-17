@@ -4,6 +4,7 @@ prompt.txt
 test_api.py
 frontend/
 diff.txt
+tests_logs.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -176,20 +177,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-
-# Arquivos de teste com erros relacionados a pagamentos (temporário)
-app/tests/test_mercadopago_gateway.py
-app/tests/test_stripe_gateway.py
-app/tests/test_payment_gateway_service.py
-app/tests/test_payment_service.py
-app/tests/test_payment_views.py
-tests_logs.txt
-
-# Arquivos de código fonte relacionados a pagamentos (temporário)
-app/services/payment/mercadopago_gateway.py
-app/services/payment/stripe_gateway.py
-app/services/payment/gateway_factory.py
-app/services/payment_gateway_service.py
-app/services/payment_service.py
-app/views/payment_views.py
-app/models/finance_models.py
