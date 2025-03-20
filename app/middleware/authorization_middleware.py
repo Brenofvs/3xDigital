@@ -7,6 +7,9 @@ armazenado no token JWT. Ele extrai o token do cabeçalho Authorization, decodif
 se o usuário possui um dos papéis exigidos para acessar a rota.
 
 Funções:
+    validate_token(token: str) -> dict:
+        Função auxiliar que valida um token JWT e retorna seu payload.
+        
     require_role(allowed_roles: List[str]) -> Callable:
         Decorador que valida o papel do usuário antes de executar a rota. Caso o token seja
         inválido/ausente ou o papel não seja suficiente, retorna o erro apropriado.
@@ -33,9 +36,31 @@ Exemplo de Uso:
         return web.json_response({"message": "Bem-vindo ao seu perfil!"})
 """
 
-from typing import Callable, List
+from typing import Callable, List, Optional
 from aiohttp import web
 from app.services.auth_service import AuthService
+
+async def validate_token(token: str) -> Optional[dict]:
+    """
+    Função que valida um token JWT e retorna seu payload.
+    
+    Args:
+        token (str): Token JWT completo com prefixo "Bearer"
+        
+    Returns:
+        Optional[dict]: Payload do token se válido, None caso contrário
+        
+    Raises:
+        ValueError: Se o token for inválido ou expirado
+    """
+    if not token.startswith("Bearer "):
+        return None
+        
+    token = token.split(" ")[1]
+    try:
+        return AuthService.verify_jwt_token(token)
+    except ValueError:
+        return None
 
 def require_role(allowed_roles: List[str]) -> Callable:
     """
@@ -73,9 +98,10 @@ def require_role(allowed_roles: List[str]) -> Callable:
                     content_type="application/json"
                 )
 
-            token = auth_header.split(" ")[1]
             try:
-                payload = AuthService.verify_jwt_token(token)
+                payload = await validate_token(auth_header)
+                if not payload:
+                    raise ValueError("Token inválido")
             except ValueError as e:
                 # Token expirado ou inválido
                 raise web.HTTPUnauthorized(
@@ -139,9 +165,10 @@ def require_auth(handler: Callable) -> Callable:
                 content_type="application/json"
             )
 
-        token = auth_header.split(" ")[1]
         try:
-            payload = AuthService.verify_jwt_token(token)
+            payload = await validate_token(auth_header)
+            if not payload:
+                raise ValueError("Token inválido")
         except ValueError as e:
             # Token expirado ou inválido
             raise web.HTTPUnauthorized(

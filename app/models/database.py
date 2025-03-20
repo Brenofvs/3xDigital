@@ -109,10 +109,14 @@ class Category(Base):
     Attributes:
         id (int): ID único da categoria.
         name (str): Nome da categoria.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
     """
     __tablename__ = 'categories'
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
 
     products = relationship("Product", order_by="Product.id", back_populates="category")
 
@@ -183,6 +187,8 @@ class OrderItem(Base):
         product_id (int): ID do produto associado.
         quantity (int): Quantidade do produto.
         price (float): Preço unitário do produto.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
     """
     __tablename__ = 'order_items'
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -190,6 +196,8 @@ class OrderItem(Base):
     product_id = Column(Integer, ForeignKey('products.id', ondelete="CASCADE"), nullable=False)
     quantity = Column(Integer, nullable=False)
     price = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
 
     order = relationship("Order", back_populates="items")
     product = relationship("Product", back_populates="order_items")
@@ -209,6 +217,7 @@ class Affiliate(Base):
         request_status (str): Status da solicitação de afiliação, podendo ser 'pending', 'approved' ou 'blocked'.
         payment_info (dict): Informações de pagamento do afiliado (banco, agência, conta, etc).
         created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
     """
     __tablename__ = 'affiliates'
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -221,7 +230,8 @@ class Affiliate(Base):
         nullable=False,
         default='pending'
     )
-    created_at = Column(DateTime, default=TIMEZONE)  # Adicionando campo de data de criação
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
 
     user = relationship("User", back_populates="affiliate")
     sales = relationship("Sale", order_by="Sale.id", back_populates="affiliate")
@@ -256,12 +266,16 @@ class Sale(Base):
         affiliate_id (int): ID do afiliado associado à venda.
         order_id (int): ID do pedido associado à venda.
         commission (float): Comissão gerada pela venda.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
     """
     __tablename__ = 'sales'
     id = Column(Integer, primary_key=True, autoincrement=True)
     affiliate_id = Column(Integer, ForeignKey('affiliates.id'), nullable=False)
     order_id = Column(Integer, ForeignKey('orders.id'), nullable=False)
     commission = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
 
     affiliate = relationship("Affiliate", back_populates="sales")
     order = relationship("Order", back_populates="sales")
@@ -299,12 +313,16 @@ class Log(Base):
         user_id (int): ID do usuário associado ao log.
         action (str): Descrição da ação realizada.
         timestamp (datetime): Data e hora da ação.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
     """
     __tablename__ = 'logs'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id'))
     action = Column(Text, nullable=False)
     timestamp = Column(DateTime, default=TIMEZONE)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
 
     user = relationship("User", back_populates="logs")
 
@@ -318,12 +336,16 @@ class APIToken(Base):
         service_name (str): Nome do serviço associado ao token.
         token (str): Valor do token.
         user_id (int): ID do usuário associado ao token.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
     """
     __tablename__ = 'api_tokens'
     id = Column(Integer, primary_key=True, autoincrement=True)
     service_name = Column(String(255), nullable=False)
     token = Column(Text, nullable=False)
     user_id = Column(Integer, ForeignKey('users.id'))
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
 
     user = relationship("User", back_populates="api_tokens")
 

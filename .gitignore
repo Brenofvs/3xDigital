@@ -1,10 +1,12 @@
 # Ignorar a pasta ./documentos
 documentos/
+memory-bank/
 prompt.txt
 test_api.py
 frontend/
 diff.txt
 tests_logs.txt
+.cursorrules
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

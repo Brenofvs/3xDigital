@@ -136,13 +136,12 @@ class AuthService:
         """
         try:
             # Configuramos o algoritmo e verificamos a expiração
-            decoded = jwt.decode(
+            return jwt.decode(
                 token, 
                 JWT_SECRET_KEY, 
                 algorithms=["HS256"],
                 options={"verify_exp": True}
             )
-            return decoded
         except jwt.ExpiredSignatureError:
             raise ValueError("Token expirado.")
         except jwt.InvalidTokenError:

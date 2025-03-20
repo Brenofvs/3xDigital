@@ -40,6 +40,8 @@ class AffiliateBalance(Base):
         total_earned (float): Total ganho histórico (total de comissões).
         total_withdrawn (float): Total sacado histórico.
         last_updated (datetime): Data da última atualização do saldo.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
         
     Relacionamentos:
         affiliate: Relação com o afiliado dono do saldo.
@@ -53,6 +55,8 @@ class AffiliateBalance(Base):
     total_earned = Column(Float, nullable=False, default=0.0)
     total_withdrawn = Column(Float, nullable=False, default=0.0)
     last_updated = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
     
     # Relacionamentos
     affiliate = relationship("Affiliate", back_populates="balance")
@@ -71,6 +75,8 @@ class AffiliateTransaction(Base):
         description (str): Descrição detalhada da transação.
         reference_id (int): ID de referência (venda, saque, etc).
         transaction_date (datetime): Data e hora da transação.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
         
     Relacionamentos:
         balance: Relação com o saldo do afiliado.
@@ -84,6 +90,8 @@ class AffiliateTransaction(Base):
     description = Column(String(255), nullable=False)
     reference_id = Column(Integer, nullable=True)  # ID da venda ou saque relacionado
     transaction_date = Column(DateTime, default=TIMEZONE)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
     
     # Relacionamentos
     balance = relationship("AffiliateBalance", back_populates="transactions")

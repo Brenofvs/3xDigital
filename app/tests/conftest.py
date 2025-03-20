@@ -19,6 +19,10 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer, TestClient
 from app.config.settings import DB_SESSION_KEY
 import pytest
+import os
+import sys
+from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timezone
 
 # Importa os módulos de rotas
 from app.views.auth_views import routes as auth_routes
@@ -30,6 +34,10 @@ from app.views.finance_views import routes as finance_routes
 from app.views.users_views import routes as users_routes
 from app.views.payment_views import routes as payment_routes
 from app.views.profile_views import routes as profile_routes
+from app.views.dashboard_views import routes as dashboard_routes
+
+# Adiciona o diretório raiz ao path para facilitar imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 # Usar um banco de dados em memória nomeado para ser compartilhado entre sessões
 TEST_DB_URL = "sqlite+aiosqlite:///file:memdb1?mode=memory&cache=shared&uri=true"
@@ -110,6 +118,7 @@ async def test_client_fixture(setup_database):
     app.add_routes(users_routes)
     app.add_routes(payment_routes)
     app.add_routes(profile_routes)
+    app.add_routes(dashboard_routes)
     
     server = TestServer(app)
     client = TestClient(server)
@@ -176,3 +185,82 @@ def mock_payment_gateways(monkeypatch):
 
 # Nota: A fixture mercadopago_gateway já foi movida diretamente para o arquivo test_mercadopago_gateway.py
 # para evitar duplicidade de código, já que era usada apenas naquele arquivo
+
+# Fixtures gerais para banco de dados
+@pytest.fixture
+def mock_db_session():
+    """Fornece uma sessão de banco de dados simulada para testes."""
+    session = AsyncMock()
+    return session
+
+
+# Fixtures para simulação de usuários
+@pytest.fixture
+def admin_user():
+    """
+    Fixture que cria um usuário admin para testes.
+    """
+    return {
+        "id": 1,
+        "username": "admin_test",
+        "email": "admin@example.com",
+        "role": "admin",
+        "is_active": True
+    }
+
+
+@pytest.fixture
+def affiliate_user():
+    """
+    Fixture que cria um usuário afiliado para testes.
+    """
+    return {
+        "id": 2,
+        "username": "affiliate_test",
+        "email": "affiliate@example.com",
+        "role": "affiliate",
+        "is_active": True,
+        "affiliate_id": 1
+    }
+
+
+@pytest.fixture
+def customer_user():
+    """
+    Fixture que cria um usuário cliente comum para testes.
+    """
+    return {
+        "id": 3,
+        "username": "customer_test",
+        "email": "customer@example.com",
+        "role": "customer",
+        "is_active": True
+    }
+
+
+# Fixture para pular verificações de autenticação
+@pytest.fixture
+def mock_auth_check():
+    """
+    Simula o middleware de autenticação para testes,
+    permitindo que as requisições passem pela verificação.
+    """
+    with patch('app.middleware.authorization_middleware.require_role', 
+              lambda roles: lambda handler: handler):
+        yield
+
+
+# Fixture para simular data e hora atual
+@pytest.fixture
+def mock_current_datetime():
+    """Retorna uma data e hora fixa para testes."""
+    return datetime(2023, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+
+# Fixture para simular a configuração de fuso horário
+@pytest.fixture
+def mock_timezone():
+    """Simula a função TIMEZONE da configuração."""
+    fixed_dt = datetime(2023, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+    with patch('app.config.settings.TIMEZONE', return_value=fixed_dt):
+        yield fixed_dt
