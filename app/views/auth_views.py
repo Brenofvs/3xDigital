@@ -22,12 +22,15 @@ Funções:
     admin_only_route(request: web.Request) -> web.Response:
         Rota de exemplo que utiliza o middleware de autorização para permitir acesso somente
         a usuários com papel 'admin'.
+        
+    refresh_token(request: web.Request) -> web.Response:
+        Rota para atualizar tokens de acesso usando um refresh token.
 """
 
 from aiohttp import web
 from app.services.auth_service import AuthService
 from app.middleware.authorization_middleware import require_role
-from app.config.settings import DB_SESSION_KEY
+from app.config.settings import DB_SESSION_KEY, JWT_EXPIRATION_MINUTES
 
 routes = web.RouteTableDef()
 
@@ -125,7 +128,7 @@ async def login_user(request: web.Request):
         request (web.Request): Objeto de requisição contendo o corpo da requisição em JSON.
 
     Returns:
-        web.Response: Resposta JSON contendo o token de acesso ou erro de autenticação.
+        web.Response: Resposta JSON contendo o token de acesso, refresh token e outras informações.
     """
     try:
         data = await request.json()
@@ -139,8 +142,20 @@ async def login_user(request: web.Request):
         if not user:
             return web.json_response({"error": "Credenciais inválidas"}, status=401)
 
-        token = auth_service.generate_jwt_token(user)
-        return web.json_response({"access_token": token}, status=200)
+        # Gera o token de acesso
+        access_token = auth_service.generate_jwt_token(user)
+        
+        # Gera o refresh token
+        refresh_token = await auth_service.generate_refresh_token(user)
+        
+        return web.json_response({
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "Bearer",
+            "expires_in": JWT_EXPIRATION_MINUTES * 60,  # Em segundos
+            "user_id": user.id,
+            "user_role": user.role
+        }, status=200)
     except Exception as e:
         return web.json_response({"error": f"Erro interno: {str(e)}"}, status=500)
 
@@ -149,7 +164,13 @@ async def logout_user(request: web.Request):
     """
     Rota POST para logout.
 
-    Em sistemas com JWT stateless, o logout é tratado no cliente descartando o token.
+    JSON de entrada:
+        {
+          "refresh_token": "..."  # Opcional
+        }
+
+    Se o refresh_token for fornecido, ele será revogado.
+    Caso contrário, será considerado um logout básico do cliente.
 
     Args:
         request (web.Request): Objeto de requisição.
@@ -157,4 +178,51 @@ async def logout_user(request: web.Request):
     Returns:
         web.Response: Resposta JSON indicando sucesso no logout.
     """
-    return web.json_response({"message": "Logout efetuado com sucesso"}, status=200)
+    try:
+        data = await request.json()
+        refresh_token = data.get("refresh_token")
+        
+        if refresh_token:
+            session = request.app[DB_SESSION_KEY]
+            auth_service = AuthService(session)
+            await auth_service.revoke_refresh_token(refresh_token)
+        
+        return web.json_response({"message": "Logout efetuado com sucesso"}, status=200)
+    except Exception:
+        # Mesmo com erro, retornamos sucesso para o cliente, pois o token será descartado de qualquer forma
+        return web.json_response({"message": "Logout efetuado com sucesso"}, status=200)
+
+@routes.post("/auth/refresh")
+async def refresh_token(request: web.Request):
+    """
+    Rota POST para atualizar tokens de acesso usando um refresh token.
+    
+    JSON de entrada:
+        {
+          "refresh_token": "..."
+        }
+    
+    Args:
+        request (web.Request): Objeto de requisição contendo o refresh token.
+        
+    Returns:
+        web.Response: Resposta JSON contendo o novo token de acesso ou erro.
+    """
+    try:
+        data = await request.json()
+        refresh_token = data.get("refresh_token")
+        
+        if not refresh_token:
+            return web.json_response({"error": "Refresh token não fornecido"}, status=400)
+            
+        session = request.app[DB_SESSION_KEY]
+        auth_service = AuthService(session)
+        
+        success, message, tokens = await auth_service.refresh_access_token(refresh_token)
+        
+        if not success:
+            return web.json_response({"error": message}, status=401)
+            
+        return web.json_response(tokens, status=200)
+    except Exception as e:
+        return web.json_response({"error": f"Erro interno: {str(e)}"}, status=500)

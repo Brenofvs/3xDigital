@@ -13,14 +13,18 @@ Classes:
 
 import bcrypt
 import jwt
-from datetime import timedelta
-from typing import Optional
+import uuid
+from datetime import datetime, timedelta
+from typing import Optional, Tuple, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_
 
-from app.models.database import User
-from app.config.settings import JWT_SECRET_KEY, TIMEZONE, get_current_timezone
+from app.models.database import User, RefreshToken
+from app.config.settings import (
+    JWT_SECRET_KEY, TIMEZONE, get_current_timezone, 
+    JWT_EXPIRATION_MINUTES, REFRESH_TOKEN_EXPIRATION_DAYS
+)
 
 class AuthService:
     """
@@ -32,6 +36,11 @@ class AuthService:
         generate_jwt_token: Gera um token JWT para um usuário.
         verify_jwt_token: Decodifica e valida um token JWT.
         check_permissions: Verifica se o usuário tem o papel necessário.
+        generate_refresh_token: Gera um novo refresh token para um usuário.
+        verify_refresh_token: Verifica se um refresh token é válido.
+        refresh_access_token: Gera um novo access token a partir de um refresh token.
+        revoke_refresh_token: Revoga um refresh token.
+        revoke_all_refresh_tokens: Revoga todos os refresh tokens de um usuário.
     """
 
     def __init__(self, db_session: AsyncSession):
@@ -89,7 +98,7 @@ class AuthService:
         Autentica um usuário verificando o e-mail e a senha.
 
         Args:
-            email (str): E-mail do usuário.
+            identifier (str): Email ou CPF do usuário.
             password (str): Senha do usuário.
 
         Returns:
@@ -112,7 +121,7 @@ class AuthService:
         Returns:
             str: Token JWT gerado.
         """
-        expires = TIMEZONE() + timedelta(hours=1)
+        expires = TIMEZONE() + timedelta(minutes=JWT_EXPIRATION_MINUTES)
         payload = {
             "sub": str(user.id),
             "role": user.role,
@@ -162,3 +171,161 @@ class AuthService:
         if user_role == "admin":
             return True
         return user_role == role_required
+        
+    async def generate_refresh_token(self, user: User) -> str:
+        """
+        Gera um novo refresh token para um usuário.
+        
+        Args:
+            user (User): Usuário para o qual o token será gerado.
+            
+        Returns:
+            str: Token de atualização gerado.
+        """
+        # Gerar um token único
+        token_value = str(uuid.uuid4())
+        
+        # Calcular a data de expiração
+        expires_at = TIMEZONE() + timedelta(days=REFRESH_TOKEN_EXPIRATION_DAYS)
+        
+        # Criar o novo token
+        refresh_token = RefreshToken(
+            token=token_value,
+            user_id=user.id,
+            expires_at=expires_at
+        )
+        
+        # Salvar no banco de dados
+        try:
+            self.db_session.add(refresh_token)
+            await self.db_session.commit()
+            return token_value
+        except Exception as e:
+            await self.db_session.rollback()
+            raise e
+    
+    async def verify_refresh_token(self, token: str) -> Tuple[bool, Optional[User]]:
+        """
+        Verifica se um refresh token é válido.
+        
+        Args:
+            token (str): Token de atualização a ser verificado.
+            
+        Returns:
+            Tuple[bool, Optional[User]]: Uma tupla contendo um booleano indicando
+                                         se o token é válido e o usuário associado
+                                         ao token (se for válido).
+        """
+        # Buscar o token no banco de dados
+        result = await self.db_session.execute(
+            select(RefreshToken).where(
+                and_(
+                    RefreshToken.token == token,
+                    RefreshToken.is_revoked == False
+                )
+            )
+        )
+        refresh_token = result.scalars().first()
+        
+        # Verificar se o token existe e é válido
+        if not refresh_token or refresh_token.is_expired:
+            return False, None
+        
+        # Buscar o usuário associado ao token
+        user_result = await self.db_session.execute(
+            select(User).where(User.id == refresh_token.user_id)
+        )
+        user = user_result.scalars().first()
+        
+        if not user or not user.is_active:
+            return False, None
+            
+        return True, user
+    
+    async def refresh_access_token(self, refresh_token: str) -> Tuple[bool, str, Dict[str, Any]]:
+        """
+        Gera um novo access token a partir de um refresh token.
+        
+        Args:
+            refresh_token (str): Token de atualização a ser usado.
+            
+        Returns:
+            Tuple[bool, str, dict]: Uma tupla contendo:
+                                    - Um booleano indicando sucesso ou falha
+                                    - Uma mensagem de sucesso ou erro
+                                    - Um dicionário com os tokens (se sucesso)
+        """
+        # Verificar o refresh token
+        is_valid, user = await self.verify_refresh_token(refresh_token)
+        
+        if not is_valid or not user:
+            return False, "Refresh token inválido ou expirado", {}
+        
+        # Gerar um novo access token
+        access_token = self.generate_jwt_token(user)
+        
+        return True, "Token atualizado com sucesso", {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "expires_in": JWT_EXPIRATION_MINUTES * 60  # em segundos
+        }
+    
+    async def revoke_refresh_token(self, token: str) -> bool:
+        """
+        Revoga um refresh token específico.
+        
+        Args:
+            token (str): Token a ser revogado.
+            
+        Returns:
+            bool: True se o token foi revogado com sucesso, False caso contrário.
+        """
+        try:
+            # Buscar o token
+            result = await self.db_session.execute(
+                select(RefreshToken).where(RefreshToken.token == token)
+            )
+            refresh_token = result.scalars().first()
+            
+            if not refresh_token:
+                return False
+            
+            # Revogar o token
+            refresh_token.is_revoked = True
+            await self.db_session.commit()
+            return True
+        except Exception:
+            await self.db_session.rollback()
+            return False
+    
+    async def revoke_all_refresh_tokens(self, user_id: int) -> bool:
+        """
+        Revoga todos os refresh tokens de um usuário.
+        
+        Args:
+            user_id (int): ID do usuário.
+            
+        Returns:
+            bool: True se os tokens foram revogados com sucesso, False caso contrário.
+        """
+        try:
+            # Buscar todos os tokens não revogados do usuário
+            result = await self.db_session.execute(
+                select(RefreshToken).where(
+                    and_(
+                        RefreshToken.user_id == user_id,
+                        RefreshToken.is_revoked == False
+                    )
+                )
+            )
+            refresh_tokens = result.scalars().all()
+            
+            # Revogar todos os tokens
+            for token in refresh_tokens:
+                token.is_revoked = True
+            
+            await self.db_session.commit()
+            return True
+        except Exception:
+            await self.db_session.rollback()
+            return False

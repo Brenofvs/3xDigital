@@ -1,0 +1,329 @@
+warning: in the working copy of 'app/config/settings.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/models/database.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/services/auth_service.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/app/config/settings.py b/app/config/settings.py[m
+[1mindex 8a30ce1..3167b31 100644[m
+[1m--- a/app/config/settings.py[m
+[1m+++ b/app/config/settings.py[m
+[36m@@ -45,6 +45,13 @@[m [mint: Tempo de expiração dos tokens JWT, em minutos.[m
+ Padrão é 60 minutos se não for definido na variável de ambiente.[m
+ """[m
+ [m
+[32m+[m[32m# Tempo de expiração do Refresh Token (em dias)[m
+[32m+[m[32mREFRESH_TOKEN_EXPIRATION_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRATION_DAYS", 30))[m
+[32m+[m[32m"""[m
+[32m+[m[32mint: Tempo de expiração dos refresh tokens, em dias.[m
+[32m+[m[32mPadrão é 30 dias se não for definido na variável de ambiente.[m
+[32m+[m[32m"""[m
+[32m+[m
+ # Outras configurações que venham a ser necessárias[m
+ [m
+ DB_SESSION_KEY = web.AppKey[AsyncSession]("db_session")[m
+[1mdiff --git a/app/models/database.py b/app/models/database.py[m
+[1mindex 7f8f5cc..4ad7c86 100644[m
+[1m--- a/app/models/database.py[m
+[1m+++ b/app/models/database.py[m
+[36m@@ -17,6 +17,7 @@[m [mClasses:[m
+     Log: Representa logs de ações de usuários.[m
+     APIToken: Representa tokens de API associados a usuários.[m
+     ShippingAddress: Representa o endereço de entrega de um pedido.[m
+[32m+[m[32m    RefreshToken: Representa um token de atualização (refresh token) usado para gerar novos access tokens.[m
+ [m
+ Functions:[m
+     create_database(db_url: str) -> None:[m
+[36m@@ -93,6 +94,7 @@[m [mclass User(Base):[m
+     payments = relationship("Payment", order_by="Payment.id", back_populates="user")[m
+     logs = relationship("Log", order_by="Log.id", back_populates="user")[m
+     api_tokens = relationship("APIToken", order_by="APIToken.id", back_populates="user")[m
+[32m+[m[32m    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")[m
+ [m
+     @property[m
+     def is_active(self):[m
+[36m@@ -383,6 +385,52 @@[m [mclass ShippingAddress(Base):[m
+     order = relationship("Order", back_populates="shipping_address")[m
+ [m
+ [m
+[32m+[m[32mclass RefreshToken(Base):[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Representa um token de atualização (refresh token) usado para gerar novos access tokens.[m
+[32m+[m
+[32m+[m[32m    Attributes:[m
+[32m+[m[32m        id (int): ID único do token.[m
+[32m+[m[32m        token (str): Valor do token de atualização.[m
+[32m+[m[32m        user_id (int): ID do usuário associado ao token.[m
+[32m+[m[32m        expires_at (datetime): Data de expiração do token.[m
+[32m+[m[32m        is_revoked (bool): Indica se o token foi revogado.[m
+[32m+[m[32m        created_at (datetime): Data de criação do registro.[m
+[32m+[m[32m        updated_at (datetime): Data da última atualização do registro.[m
+[32m+[m[32m    """[m
+[32m+[m[32m    __tablename__ = 'refresh_tokens'[m
+[32m+[m[32m    id = Column(Integer, primary_key=True, autoincrement=True)[m
+[32m+[m[32m    token = Column(String(255), nullable=False, unique=True)[m
+[32m+[m[32m    user_id = Column(Integer, ForeignKey('users.id', ondelete="CASCADE"), nullable=False)[m
+[32m+[m[32m    expires_at = Column(DateTime, nullable=False)[m
+[32m+[m[32m    is_revoked = Column(Boolean, default=False)[m
+[32m+[m[32m    created_at = Column(DateTime, default=TIMEZONE)[m
+[32m+[m[32m    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)[m
+[32m+[m
+[32m+[m[32m    user = relationship("User", back_populates="refresh_tokens")[m
+[32m+[m
+[32m+[m[32m    @property[m
+[32m+[m[32m    def is_expired(self):[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Verifica se o token está expirado.[m
+[32m+[m[41m        [m
+[32m+[m[32m        Returns:[m
+[32m+[m[32m            bool: True se o token estiver expirado, False caso contrário.[m
+[32m+[m[32m        """[m
+[32m+[m[32m        current_time = datetime.now(self.expires_at.tzinfo)[m
+[32m+[m[32m        return current_time > self.expires_at[m
+[32m+[m[41m    [m
+[32m+[m[32m    @property[m
+[32m+[m[32m    def is_valid(self):[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Verifica se o token é válido (não expirado e não revogado).[m
+[32m+[m[41m        [m
+[32m+[m[32m        Returns:[m
+[32m+[m[32m            bool: True se o token for válido, False caso contrário.[m
+[32m+[m[32m        """[m
+[32m+[m[32m        return not (self.is_expired or self.is_revoked)[m
+[32m+[m
+[32m+[m
+ # ========== Métodos para criação do banco de dados de forma assíncrona ==========[m
+ [m
+ async def create_database(db_url: str = "sqlite+aiosqlite:///./3x_digital.db"):[m
+[1mdiff --git a/app/services/auth_service.py b/app/services/auth_service.py[m
+[1mindex a5b80e1..6b621a2 100644[m
+[1m--- a/app/services/auth_service.py[m
+[1m+++ b/app/services/auth_service.py[m
+[36m@@ -13,14 +13,18 @@[m [mClasses:[m
+ [m
+ import bcrypt[m
+ import jwt[m
+[31m-from datetime import timedelta[m
+[31m-from typing import Optional[m
+[32m+[m[32mimport uuid[m
+[32m+[m[32mfrom datetime import datetime, timedelta[m
+[32m+[m[32mfrom typing import Optional, Tuple, Dict, Any[m
+ [m
+ from sqlalchemy.ext.asyncio import AsyncSession[m
+[31m-from sqlalchemy import select[m
+[32m+[m[32mfrom sqlalchemy import select, and_[m
+ [m
+[31m-from app.models.database import User[m
+[31m-from app.config.settings import JWT_SECRET_KEY, TIMEZONE, get_current_timezone[m
+[32m+[m[32mfrom app.models.database import User, RefreshToken[m
+[32m+[m[32mfrom app.config.settings import ([m
+[32m+[m[32m    JWT_SECRET_KEY, TIMEZONE, get_current_timezone,[m[41m [m
+[32m+[m[32m    JWT_EXPIRATION_MINUTES, REFRESH_TOKEN_EXPIRATION_DAYS[m
+[32m+[m[32m)[m
+ [m
+ class AuthService:[m
+     """[m
+[36m@@ -32,6 +36,11 @@[m [mclass AuthService:[m
+         generate_jwt_token: Gera um token JWT para um usuário.[m
+         verify_jwt_token: Decodifica e valida um token JWT.[m
+         check_permissions: Verifica se o usuário tem o papel necessário.[m
+[32m+[m[32m        generate_refresh_token: Gera um novo refresh token para um usuário.[m
+[32m+[m[32m        verify_refresh_token: Verifica se um refresh token é válido.[m
+[32m+[m[32m        refresh_access_token: Gera um novo access token a partir de um refresh token.[m
+[32m+[m[32m        revoke_refresh_token: Revoga um refresh token.[m
+[32m+[m[32m        revoke_all_refresh_tokens: Revoga todos os refresh tokens de um usuário.[m
+     """[m
+ [m
+     def __init__(self, db_session: AsyncSession):[m
+[36m@@ -89,7 +98,7 @@[m [mclass AuthService:[m
+         Autentica um usuário verificando o e-mail e a senha.[m
+ [m
+         Args:[m
+[31m-            email (str): E-mail do usuário.[m
+[32m+[m[32m            identifier (str): Email ou CPF do usuário.[m
+             password (str): Senha do usuário.[m
+ [m
+         Returns:[m
+[36m@@ -112,7 +121,7 @@[m [mclass AuthService:[m
+         Returns:[m
+             str: Token JWT gerado.[m
+         """[m
+[31m-        expires = TIMEZONE() + timedelta(hours=1)[m
+[32m+[m[32m        expires = TIMEZONE() + timedelta(minutes=JWT_EXPIRATION_MINUTES)[m
+         payload = {[m
+             "sub": str(user.id),[m
+             "role": user.role,[m
+[36m@@ -162,3 +171,161 @@[m [mclass AuthService:[m
+         if user_role == "admin":[m
+             return True[m
+         return user_role == role_required[m
+[32m+[m[41m        [m
+[32m+[m[32m    async def generate_refresh_token(self, user: User) -> str:[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Gera um novo refresh token para um usuário.[m
+[32m+[m[41m        [m
+[32m+[m[32m        Args:[m
+[32m+[m[32m            user (User): Usuário para o qual o token será gerado.[m
+[32m+[m[41m            [m
+[32m+[m[32m        Returns:[m
+[32m+[m[32m            str: Token de atualização gerado.[m
+[32m+[m[32m        """[m
+[32m+[m[32m        # Gerar um token único[m
+[32m+[m[32m        token_value = str(uuid.uuid4())[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Calcular a data de expiração[m
+[32m+[m[32m        expires_at = TIMEZONE() + timedelta(days=REFRESH_TOKEN_EXPIRATION_DAYS)[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Criar o novo token[m
+[32m+[m[32m        refresh_token = RefreshToken([m
+[32m+[m[32m            token=token_value,[m
+[32m+[m[32m            user_id=user.id,[m
+[32m+[m[32m            expires_at=expires_at[m
+[32m+[m[32m        )[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Salvar no banco de dados[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            self.db_session.add(refresh_token)[m
+[32m+[m[32m            await self.db_session.commit()[m
+[32m+[m[32m            return token_value[m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            await self.db_session.rollback()[m
+[32m+[m[32m            raise e[m
+[32m+[m[41m    [m
+[32m+[m[32m    async def verify_refresh_token(self, token: str) -> Tuple[bool, Optional[User]]:[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Verifica se um refresh token é válido.[m
+[32m+[m[41m        [m
+[32m+[m[32m        Args:[m
+[32m+[m[32m            token (str): Token de atualização a ser verificado.[m
+[32m+[m[41m            [m
+[32m+[m[32m        Returns:[m
+[32m+[m[32m            Tuple[bool, Optional[User]]: Uma tupla contendo um booleano indicando[m
+[32m+[m[32m                                         se o token é válido e o usuário associado[m
+[32m+[m[32m                                         ao token (se for válido).[m
+[32m+[m[32m        """[m
+[32m+[m[32m        # Buscar o token no banco de dados[m
+[32m+[m[32m        result = await self.db_session.execute([m
+[32m+[m[32m            select(RefreshToken).where([m
+[32m+[m[32m                and_([m
+[32m+[m[32m                    RefreshToken.token == token,[m
+[32m+[m[32m                    RefreshToken.is_revoked == False[m
+[32m+[m[32m                )[m
+[32m+[m[32m            )[m
+[32m+[m[32m        )[m
+[32m+[m[32m        refresh_token = result.scalars().first()[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Verificar se o token existe e é válido[m
+[32m+[m[32m        if not refresh_token or refresh_token.is_expired:[m
+[32m+[m[32m            return False, None[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Buscar o usuário associado ao token[m
+[32m+[m[32m        user_result = await self.db_session.execute([m
+[32m+[m[32m            select(User).where(User.id == refresh_token.user_id)[m
+[32m+[m[32m        )[m
+[32m+[m[32m        user = user_result.scalars().first()[m
+[32m+[m[41m        [m
+[32m+[m[32m        if not user or not user.is_active:[m
+[32m+[m[32m            return False, None[m
+[32m+[m[41m            [m
+[32m+[m[32m        return True, user[m
+[32m+[m[41m    [m
+[32m+[m[32m    async def refresh_access_token(self, refresh_token: str) -> Tuple[bool, str, Dict[str, Any]]:[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Gera um novo access token a partir de um refresh token.[m
+[32m+[m[41m        [m
+[32m+[m[32m        Args:[m
+[32m+[m[32m            refresh_token (str): Token de atualização a ser usado.[m
+[32m+[m[41m            [m
+[32m+[m[32m        Returns:[m
+[32m+[m[32m            Tuple[bool, str, dict]: Uma tupla contendo:[m
+[32m+[m[32m                                    - Um booleano indicando sucesso ou falha[m
+[32m+[m[32m                                    - Uma mensagem de sucesso ou erro[m
+[32m+[m[32m                                    - Um dicionário com os tokens (se sucesso)[m
+[32m+[m[32m        """[m
+[32m+[m[32m        # Verificar o refresh token[m
+[32m+[m[32m        is_valid, user = await self.verify_refresh_token(refresh_token)[m
+[32m+[m[41m        [m
+[32m+[m[32m        if not is_valid or not user:[m
+[32m+[m[32m            return False, "Refresh token inválido ou expirado", {}[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Gerar um novo access token[m
+[32m+[m[32m        access_token = self.generate_jwt_token(user)[m
+[32m+[m[41m        [m
+[32m+[m[32m        return True, "Token atualizado com sucesso", {[m
+[32m+[m[32m            "access_token": access_token,[m
+[32m+[m[32m            "token_type": "Bearer",[m
+[32m+[m[32m            "expires_in": JWT_EXPIRATION_MINUTES * 60  # em segundos[m
+[32m+[m[32m        }[m
+[32m+[m[41m    [m
+[32m+[m[32m    async def revoke_refresh_token(self, token: str) -> bool:[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Revoga um refresh token específico.[m
+[32m+[m[41m        [m
+[32m+[m[32m        Args:[m
+[32m+[m[32m            token (str): Token a ser revogado.[m
+[32m+[m[41m            [m
+[32m+[m[32m        Returns:[m
+[32m+[m[32m            bool: True se o token foi revogado com sucesso, False caso contrário.[m
+[32m+[m[32m        """[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            # Buscar o token[m
+[32m+[m[32m            result = await self.db_session.execute([m
+[32m+[m[32m                select(RefreshToken).where(RefreshToken.token == token)[m
+[32m+[m[32m            )[m
+[32m+[m[32m            refresh_token = result.scalars().first()[m
+[32m+[m[41m            [m
+[32m+[m[32m            if not refresh_token:[m
+[32m+[m[32m                return False[m
+[32m+[m[41m            [m
+[32m+[m[32m            # Revogar o token[m
+[32m+[m[32m            refresh_token.is_revoked = True[m
+[32m+[m[32m            await self.db_session.commit()[m
+[32m+[m[32m            return True[m
+[32m+[m[32m        except Exception:[m
+[32m+[m[32m            await self.db_session.rollback()[m
+[32m+[m[32m            return False[m
+[32m+[m[41m    [m
+[32m+[m[32m    async def revoke_all_refresh_tokens(self, user_id: int) -> bool:[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Revoga todos os refresh tokens de um usuário.[m
+[32m+[m[41m        [m
+[32m+[m[32m        Args:[m
+[32m+[m[32m            user_id (int): ID do usuário.[m
+[32m+[m[41m            [m
+[32m+[m[32m        Returns:[m
+[32m+[m[32m            bool: True se os tokens foram revogados com sucesso, False caso contrário.[m
+[32m+[m[32m        """[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            # Buscar todos os tokens não revogados do usuário[m
+[32m+[m[32m            result = await self.db_session.execute([m
+[32m+[m[32m                select(RefreshToken).where([m
+[32m+[m[32m                    and_([m
+[32m+[m[32m                        RefreshToken.user_id == user_id,[m
+[32m+[m[32m                        RefreshToken.is_revoked == False[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                )[m
+[32m+[m[32m            )[m
+[32m+[m[32m            refresh_tokens = result.scalars().all()[m
+[32m+[m[41m            [m
+[32m+[m[32m            # Revogar todos os tokens[m
+[32m+[m[32m            for token in refresh_tokens:[m
+[32m+[m[32m                token.is_revoked = True[m
+[32m+[m[41m            [m
+[32m+[m[32m            await self.db_session.commit()[m
+[32m+[m[32m            return True[m
+[32m+[m[32m        except Exception:[m
+[32m+[m[32m            await self.db_session.rollback()[m
+[32m+[m[32m            return False[m
+[1mdiff --git a/app/tests/test_auth_service.py b/app/tests/test_auth_service.py[m
+[1mindex 4624f16..313d73c 100644[m
+[1m--- a/app/tests/test_auth_service.py[m
+[1m+++ b/app/tests/test_auth_service.py[m
+[36m@@ -21,6 +21,21 @@[m [mFunctions:[m
+ [m
+     test_jwt_generation_and_verification(async_db_session):[m
+         Testa a geração e verificação de tokens JWT para um usuário.[m
+[32m+[m[41m        [m
+[32m+[m[32m    test_generate_refresh_token(async_db_session):[m
+[32m+[m[32m        Testa a geração de um refresh token para um usuário.[m
+[32m+[m[41m        [m
+[32m+[m[32m    test_verify_refresh_token_valid(async_db_session):[m
+[32m+[m[32m        Testa a verificação de um refresh token válido.[m
+[32m+[m[41m     

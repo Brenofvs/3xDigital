@@ -45,6 +45,13 @@ int: Tempo de expiração dos tokens JWT, em minutos.
 Padrão é 60 minutos se não for definido na variável de ambiente.
 """
 
+# Tempo de expiração do Refresh Token (em dias)
+REFRESH_TOKEN_EXPIRATION_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRATION_DAYS", 30))
+"""
+int: Tempo de expiração dos refresh tokens, em dias.
+Padrão é 30 dias se não for definido na variável de ambiente.
+"""
+
 # Outras configurações que venham a ser necessárias
 
 DB_SESSION_KEY = web.AppKey[AsyncSession]("db_session")

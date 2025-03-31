@@ -31,6 +31,7 @@ from app.views.payment_views import routes as payment_routes
 from app.views.profile_views import routes as profile_routes
 from app.views.dashboard_views import routes as dashboard_routes
 from app.config.settings import DATABASE_URL, DB_SESSION_KEY
+from app.middleware.cors_middleware import setup_cors
 
 async def init_app():
     """
@@ -64,6 +65,9 @@ async def init_app():
     app.add_routes(payment_routes)
     app.add_routes(profile_routes)
     app.add_routes(dashboard_routes)
+
+    # Configuração do CORS
+    setup_cors(app)
 
     return app
 

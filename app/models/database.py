@@ -17,6 +17,7 @@ Classes:
     Log: Representa logs de ações de usuários.
     APIToken: Representa tokens de API associados a usuários.
     ShippingAddress: Representa o endereço de entrega de um pedido.
+    RefreshToken: Representa um token de atualização (refresh token) usado para gerar novos access tokens.
 
 Functions:
     create_database(db_url: str) -> None:
@@ -93,6 +94,7 @@ class User(Base):
     payments = relationship("Payment", order_by="Payment.id", back_populates="user")
     logs = relationship("Log", order_by="Log.id", back_populates="user")
     api_tokens = relationship("APIToken", order_by="APIToken.id", back_populates="user")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
 
     @property
     def is_active(self):
@@ -381,6 +383,52 @@ class ShippingAddress(Base):
     updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
 
     order = relationship("Order", back_populates="shipping_address")
+
+
+class RefreshToken(Base):
+    """
+    Representa um token de atualização (refresh token) usado para gerar novos access tokens.
+
+    Attributes:
+        id (int): ID único do token.
+        token (str): Valor do token de atualização.
+        user_id (int): ID do usuário associado ao token.
+        expires_at (datetime): Data de expiração do token.
+        is_revoked (bool): Indica se o token foi revogado.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
+    """
+    __tablename__ = 'refresh_tokens'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(String(255), nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete="CASCADE"), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    is_revoked = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
+
+    user = relationship("User", back_populates="refresh_tokens")
+
+    @property
+    def is_expired(self):
+        """
+        Verifica se o token está expirado.
+        
+        Returns:
+            bool: True se o token estiver expirado, False caso contrário.
+        """
+        current_time = datetime.now(self.expires_at.tzinfo)
+        return current_time > self.expires_at
+    
+    @property
+    def is_valid(self):
+        """
+        Verifica se o token é válido (não expirado e não revogado).
+        
+        Returns:
+            bool: True se o token for válido, False caso contrário.
+        """
+        return not (self.is_expired or self.is_revoked)
 
 
 # ========== Métodos para criação do banco de dados de forma assíncrona ==========

@@ -33,6 +33,18 @@ Test Functions:
 
     test_protected_route_no_token(test_client_fixture):
         Testa o acesso a uma rota protegida sem fornecer um token.
+        
+    test_login_refresh_token(test_client_fixture):
+        Testa que o login retorna um refresh token.
+        
+    test_refresh_token_valid(test_client_fixture):
+        Testa a atualização de um token de acesso usando um refresh token válido.
+        
+    test_refresh_token_invalid(test_client_fixture):
+        Testa a atualização de um token de acesso usando um refresh token inválido.
+        
+    test_logout_with_refresh_token(test_client_fixture):
+        Testa o logout com revogação de refresh token.
 """
 
 import pytest
@@ -95,6 +107,8 @@ async def test_login_with_email(test_client_fixture):
     Asserts:
         Verifica se a resposta retorna o status 200.
         Verifica se o campo "access_token" está presente na resposta.
+        Verifica se o campo "refresh_token" está presente na resposta.
+        Verifica se o campo "expires_in" está presente na resposta.
     """
     test_client = test_client_fixture
     await test_client.post("/auth/register", json={
@@ -110,6 +124,10 @@ async def test_login_with_email(test_client_fixture):
     assert login_resp.status == 200
     data = await login_resp.json()
     assert "access_token" in data
+    assert "refresh_token" in data
+    assert "expires_in" in data
+    assert "token_type" in data
+    assert data["token_type"] == "Bearer"
 
 @pytest.mark.asyncio
 async def test_login_with_cpf(test_client_fixture):
@@ -121,7 +139,7 @@ async def test_login_with_cpf(test_client_fixture):
 
     Asserts:
         Verifica se a resposta retorna o status 200.
-        Verifica se o campo "access_token" está presente na resposta.
+        Verifica se os campos "access_token" e "refresh_token" estão presentes na resposta.
     """
     test_client = test_client_fixture
     await test_client.post("/auth/register", json={
@@ -137,6 +155,7 @@ async def test_login_with_cpf(test_client_fixture):
     assert login_resp.status == 200
     data = await login_resp.json()
     assert "access_token" in data
+    assert "refresh_token" in data
 
 @pytest.mark.asyncio
 async def test_login_user_invalid_credentials(test_client_fixture):
@@ -162,7 +181,7 @@ async def test_login_user_invalid_credentials(test_client_fixture):
 @pytest.mark.asyncio
 async def test_logout(test_client_fixture):
     """
-    Testa a funcionalidade de logout.
+    Testa a funcionalidade de logout básico sem refresh token.
 
     Args:
         test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
@@ -338,3 +357,138 @@ async def test_admin_only_route_no_token(test_client_fixture):
     assert resp.status == 401
     data = await resp.json()
     assert "Missing or invalid Authorization header" in data["error"]
+
+@pytest.mark.asyncio
+async def test_refresh_token_valid(test_client_fixture):
+    """
+    Testa a atualização de um token de acesso usando um refresh token válido.
+    
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+        
+    Asserts:
+        Verifica se a resposta retorna o status 200.
+        Verifica se um novo access_token é retornado.
+    """
+    test_client = test_client_fixture
+    
+    # Registra um usuário
+    await test_client.post("/auth/register", json={
+        "name": "Refresh User",
+        "email": "refresh@example.com",
+        "cpf": "11122233300",
+        "password": "refreshpass"
+    })
+    
+    # Faz login para obter o refresh token
+    login_resp = await test_client.post("/auth/login", json={
+        "identifier": "refresh@example.com",
+        "password": "refreshpass"
+    })
+    login_data = await login_resp.json()
+    refresh_token = login_data["refresh_token"]
+    
+    # Usa o refresh token para obter um novo access token
+    refresh_resp = await test_client.post("/auth/refresh", json={
+        "refresh_token": refresh_token
+    })
+    
+    assert refresh_resp.status == 200
+    refresh_data = await refresh_resp.json()
+    assert "access_token" in refresh_data
+    assert refresh_data["token_type"] == "Bearer"
+    assert "expires_in" in refresh_data
+
+@pytest.mark.asyncio
+async def test_refresh_token_invalid(test_client_fixture):
+    """
+    Testa a atualização de um token de acesso usando um refresh token inválido.
+    
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+        
+    Asserts:
+        Verifica se a resposta retorna o status 401.
+        Verifica se a mensagem de erro é retornada.
+    """
+    test_client = test_client_fixture
+    
+    # Tenta usar um refresh token inválido
+    refresh_resp = await test_client.post("/auth/refresh", json={
+        "refresh_token": "invalid_refresh_token"
+    })
+    
+    assert refresh_resp.status == 401
+    refresh_data = await refresh_resp.json()
+    assert "error" in refresh_data
+    assert "inválido ou expirado" in refresh_data["error"]
+
+@pytest.mark.asyncio
+async def test_refresh_token_missing(test_client_fixture):
+    """
+    Testa a tentativa de atualização de token sem fornecer um refresh token.
+    
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+        
+    Asserts:
+        Verifica se a resposta retorna o status 400.
+        Verifica se a mensagem de erro é retornada.
+    """
+    test_client = test_client_fixture
+    
+    # Tenta fazer refresh sem fornecer um token
+    refresh_resp = await test_client.post("/auth/refresh", json={})
+    
+    assert refresh_resp.status == 400
+    refresh_data = await refresh_resp.json()
+    assert "error" in refresh_data
+    assert "não fornecido" in refresh_data["error"]
+
+@pytest.mark.asyncio
+async def test_logout_with_refresh_token(test_client_fixture):
+    """
+    Testa o logout com revogação de refresh token.
+    
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+        
+    Asserts:
+        Verifica se a resposta de logout retorna o status 200.
+        Verifica se a tentativa de uso do refresh token após logout falha.
+    """
+    test_client = test_client_fixture
+    
+    # Registra um usuário
+    await test_client.post("/auth/register", json={
+        "name": "Logout User",
+        "email": "logout@example.com",
+        "cpf": "55566677700",
+        "password": "logoutpass"
+    })
+    
+    # Faz login para obter o refresh token
+    login_resp = await test_client.post("/auth/login", json={
+        "identifier": "logout@example.com",
+        "password": "logoutpass"
+    })
+    login_data = await login_resp.json()
+    refresh_token = login_data["refresh_token"]
+    
+    # Faz logout com o refresh token
+    logout_resp = await test_client.post("/auth/logout", json={
+        "refresh_token": refresh_token
+    })
+    
+    assert logout_resp.status == 200
+    logout_data = await logout_resp.json()
+    assert logout_data["message"] == "Logout efetuado com sucesso"
+    
+    # Tenta usar o refresh token após o logout (deve falhar)
+    refresh_resp = await test_client.post("/auth/refresh", json={
+        "refresh_token": refresh_token
+    })
+    
+    assert refresh_resp.status == 401
+    refresh_data = await refresh_resp.json()
+    assert "error" in refresh_data
