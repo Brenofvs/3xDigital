@@ -33,7 +33,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from sqlalchemy import select, func, or_, and_, not_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.database import User, Affiliate, Log
+from app.models.database import User, Affiliate, Log, UserAddress
 
 
 async def list_users(
@@ -113,6 +113,12 @@ async def get_user_details(
     if not user:
         return None
     
+    # Busca o endereço principal do usuário
+    result = await session.execute(
+        select(UserAddress).where(UserAddress.user_id == user_id)
+    )
+    address = result.scalar_one_or_none()
+    
     # Prepara dados básicos
     user_data = {
         "id": user.id,
@@ -121,7 +127,15 @@ async def get_user_details(
         "cpf": user.cpf,
         "role": user.role,
         "phone": user.phone,
-        "address": user.address,
+        "address": {
+            "street": address.street if address else None,
+            "number": address.number if address else None,
+            "complement": address.complement if address else None,
+            "neighborhood": address.neighborhood if address else None,
+            "city": address.city if address else None,
+            "state": address.state if address else None,
+            "zip_code": address.zip_code if address else None
+        } if address else None,
         "active": user.active,
         "deactivation_reason": user.deactivation_reason,
         "deletion_requested": user.deletion_requested,
@@ -335,31 +349,22 @@ async def reset_user_password(
 async def update_user_profile_data(
     session: AsyncSession,
     user_id: int,
-    update_data: Dict[str, Any]
-) -> Tuple[bool, Optional[str], Optional[Dict]]:
+    profile_data: Dict[str, Any]
+) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
     """
-    Atualiza os dados pessoais de um usuário, permitindo que o próprio usuário atualize suas informações.
+    Atualiza os dados do perfil de um usuário.
     
     Args:
         session (AsyncSession): Sessão do banco de dados
-        user_id (int): ID do usuário a ser atualizado
-        update_data (Dict[str, Any]): Dados a serem atualizados (name, phone, address, etc.)
+        user_id (int): ID do usuário
+        profile_data (Dict[str, Any]): Dados do perfil a serem atualizados
         
     Returns:
-        Tuple[bool, Optional[str], Optional[Dict]]:
+        Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
             - Sucesso da operação
             - Mensagem de erro (se houver)
-            - Dados atualizados do usuário
+            - Dados atualizados do usuário (se sucesso)
     """
-    # Campos permitidos para atualização pelo próprio usuário
-    allowed_fields = ["name", "phone", "address", "profile_picture", "preferences"]
-    
-    # Filtra para manter apenas campos permitidos
-    filtered_data = {k: v for k, v in update_data.items() if k in allowed_fields}
-    
-    if not filtered_data:
-        return False, "Nenhum campo válido para atualização", None
-    
     try:
         # Busca o usuário
         result = await session.execute(
@@ -370,26 +375,47 @@ async def update_user_profile_data(
         if not user:
             return False, "Usuário não encontrado", None
         
-        # Atualiza os campos
-        for field, value in filtered_data.items():
-            setattr(user, field, value)
+        # Atualiza dados básicos do usuário
+        if "name" in profile_data:
+            user.name = profile_data["name"]
+        if "phone" in profile_data:
+            user.phone = profile_data["phone"]
+            
+        # Atualiza ou cria endereço
+        if "address" in profile_data:
+            address_data = profile_data["address"]
+            
+            # Busca endereço existente
+            result = await session.execute(
+                select(UserAddress).where(UserAddress.user_id == user_id)
+            )
+            address = result.scalar_one_or_none()
+            
+            if address:
+                # Atualiza endereço existente
+                for key, value in address_data.items():
+                    setattr(address, key, value)
+            else:
+                # Cria novo endereço
+                address = UserAddress(
+                    user_id=user_id,
+                    **address_data
+                )
+                session.add(address)
         
-        # Cria um log da alteração
-        log = Log(
-            user_id=user_id,
-            action=f"Atualizou dados pessoais",
-            timestamp=datetime.now()
-        )
-        
-        # Salva as alterações
-        session.add(user)
-        session.add(log)
         await session.commit()
-        await session.refresh(user)
         
-        # Retorna os dados atualizados
-        user_data = await get_user_details(session, user_id)
-        return True, None, user_data
+        # Retorna os dados atualizados do usuário
+        updated_data = {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "phone": user.phone,
+            "role": user.role,
+            "address": profile_data.get("address")
+        }
+        
+        return True, None, updated_data
         
     except Exception as e:
         await session.rollback()

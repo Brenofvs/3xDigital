@@ -16,11 +16,12 @@ import jwt
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, Any
+import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 
-from app.models.database import User, RefreshToken
+from app.models.database import User, RefreshToken, UserAddress
 from app.config.settings import (
     JWT_SECRET_KEY, TIMEZONE, get_current_timezone, 
     JWT_EXPIRATION_MINUTES, REFRESH_TOKEN_EXPIRATION_DAYS
@@ -31,7 +32,7 @@ class AuthService:
     Serviço de autenticação e autorização.
 
     Métodos:
-        create_user: Cria um novo usuário com hash de senha.
+        create_user: Cria um novo usuário com hash de senha e endereço.
         authenticate_user: Autentica um usuário com base em e-mail e senha.
         generate_jwt_token: Gera um token JWT para um usuário.
         verify_jwt_token: Decodifica e valida um token JWT.
@@ -52,64 +53,141 @@ class AuthService:
         """
         self.db_session = db_session
 
-    async def create_user(self, name: str, email: str, cpf: str, password: str, role: str = "affiliate") -> User:
+    async def create_user(
+            self, 
+            name: str, 
+            email: str, 
+            cpf: str, 
+            password: str, 
+            role: str = "affiliate",
+            address: Optional[Dict[str, str]] = None
+        ) -> User:
         """
-        Cria um novo usuário com hash de senha de forma assíncrona.
+        Cria um novo usuário com hash de senha e endereço de forma assíncrona.
 
         Args:
             name (str): Nome do usuário.
             email (str): E-mail do usuário.
+            cpf (str): CPF do usuário.
             password (str): Senha do usuário.
             role (str, optional): Papel do usuário. Padrão é "affiliate".
+            address (Optional[Dict[str, str]], optional): Dicionário contendo dados do endereço:
+                - street: Nome da rua
+                - number: Número
+                - complement: Complemento (opcional)
+                - neighborhood: Bairro
+                - city: Cidade
+                - state: Estado
+                - zip_code: CEP
 
         Returns:
             User: Objeto do usuário criado.
 
         Raises:
-            ValueError: Se o e-mail já estiver registrado.
-            Exception: Caso ocorra algum erro na criação do usuário.
+            ValueError: Se o e-mail já estiver registrado ou se os dados forem inválidos.
         """
-        result = await self.db_session.execute(select(User).where((User.email == email) | (User.cpf == cpf)))
-        existing_user = result.scalars().first()
-        if existing_user:
-            raise ValueError("E-mail ou CPF já está registrado.")
+        # Validações básicas
+        if not name or not email or not cpf or not password:
+            raise ValueError("Todos os campos são obrigatórios")
+
+        if len(password) < 6:
+            raise ValueError("A senha deve ter pelo menos 6 caracteres")
+
+        # Validação do papel
+        valid_roles = ["admin", "manager", "affiliate", "user"]
+        if role not in valid_roles:
+            role = "affiliate"  # Define o papel padrão se inválido
+
+        # Verifica se já existe usuário com mesmo email ou CPF
+        result = await self.db_session.execute(
+            select(User).where((User.email == email) | (User.cpf == cpf))
+        )
+        existing_user = result.scalar_one_or_none()
         
+        if existing_user:
+            if existing_user.email == email:
+                raise ValueError("Email já está registrado")
+            else:
+                raise ValueError("CPF já está registrado")
+        
+        # Gera o hash da senha
         salt = bcrypt.gensalt()
         password_hash = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
+        # Cria o novo usuário
         new_user = User(
             name=name,
             email=email,
             cpf=cpf,
             password_hash=password_hash,
-            role=role
+            role=role,
+            active=True
         )
+
         try:
             self.db_session.add(new_user)
+            await self.db_session.flush()  # Necessário para obter o ID do usuário
+
+            # Se houver dados de endereço, cria o endereço do usuário
+            if address:
+                required_fields = ['street', 'number', 'neighborhood', 'city', 'state', 'zip_code']
+                if not all(field in address for field in required_fields):
+                    raise ValueError("Campos obrigatórios de endereço faltando")
+
+                new_address = UserAddress(
+                    user_id=new_user.id,
+                    street=address['street'],
+                    number=address['number'],
+                    complement=address.get('complement', ''),  # Campo opcional
+                    neighborhood=address['neighborhood'],
+                    city=address['city'],
+                    state=address['state'],
+                    zip_code=address['zip_code']
+                )
+                self.db_session.add(new_address)
+
             await self.db_session.commit()
             await self.db_session.refresh(new_user)
             return new_user
         except Exception as e:
             await self.db_session.rollback()
-            raise e
+            raise ValueError(f"Erro ao criar usuário: {str(e)}")
 
     async def authenticate_user(self, identifier: str, password: str) -> Optional[User]:
         """
-        Autentica um usuário verificando o e-mail e a senha.
+        Autentica um usuário usando email/CPF e senha.
 
         Args:
             identifier (str): Email ou CPF do usuário.
             password (str): Senha do usuário.
 
         Returns:
-            Optional[User]: Retorna o objeto do usuário autenticado ou None se as credenciais forem inválidas.
+            Optional[User]: Objeto do usuário se autenticado, None caso contrário.
         """
-        result = await self.db_session.execute(select(User).where((User.email == identifier) | (User.cpf == identifier)))
-        user = result.scalars().first()
+        try:
+            # Busca usuário por email ou CPF
+            result = await self.db_session.execute(
+                select(User).where(
+                    or_(User.email == identifier, User.cpf == identifier)
+                )
+            )
+            user = result.scalar_one_or_none()
 
-        if user and bcrypt.checkpw(password.encode("utf-8"), user.password_hash.encode("utf-8")):
+            if not user:
+                return None
+
+            if not user.active:
+                return None
+
+            # Verifica a senha
+            if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+                return None
+
             return user
-        return None
+
+        except Exception as e:
+            logging.error(f"Erro na autenticação: {str(e)}")
+            return None
 
     def generate_jwt_token(self, user: User) -> str:
         """

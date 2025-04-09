@@ -143,7 +143,14 @@ async def test_update_user_profile(test_client_fixture, profile_data):
     updated_data = {
         "name": "Usuário Atualizado",
         "phone": "11977665544",
-        "address": "Rua Nova, 123"
+        "address": {
+            "street": "Rua Nova",
+            "number": "123",
+            "neighborhood": "Bairro Novo",
+            "city": "São Paulo",
+            "state": "SP",
+            "zip_code": "01234-567"
+        }
     }
     
     # Atualiza os dados do perfil
@@ -161,6 +168,9 @@ async def test_update_user_profile(test_client_fixture, profile_data):
     assert data["user"]["name"] == updated_data["name"]
     if "phone" in data["user"] and data["user"]["phone"] is not None:
         assert data["user"]["phone"] == updated_data["phone"]
+    if "address" in data["user"] and data["user"]["address"] is not None:
+        assert data["user"]["address"]["street"] == updated_data["address"]["street"]
+        assert data["user"]["address"]["number"] == updated_data["address"]["number"]
     
     # Verifica se a atualização foi persistida consultando o perfil novamente
     response = await test_client_fixture.get(
@@ -175,6 +185,9 @@ async def test_update_user_profile(test_client_fixture, profile_data):
     # O campo phone pode ser nulo
     if "phone" in data and data["phone"] is not None:
         assert data["phone"] == updated_data["phone"]
+    if "address" in data and data["address"] is not None:
+        assert data["address"]["street"] == updated_data["address"]["street"]
+        assert data["address"]["number"] == updated_data["address"]["number"]
     
     # Tenta atualizar sem autenticação
     response = await test_client_fixture.put(

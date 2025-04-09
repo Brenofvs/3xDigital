@@ -29,7 +29,7 @@ from app.services.user_service import (
     update_user_email, deactivate_user_account, list_users,
     update_user_role, reset_user_password, request_account_deletion
 )
-from app.models.database import User, Affiliate
+from app.models.database import User, Affiliate, UserAddress
 
 
 @pytest_asyncio.fixture
@@ -53,13 +53,24 @@ async def user_test_data(async_db_session):
         cpf="12345678901",
         role="user",
         phone="11999887766",
-        address="Rua de Teste, 123",
         created_at=datetime.now(),
         active=True
     )
     async_db_session.add(user)
     await async_db_session.commit()
     await async_db_session.refresh(user)
+
+    # Adiciona endereço ao usuário
+    user_address = UserAddress(
+        user_id=user.id,
+        street="Rua de Teste",
+        number="123",
+        city="São Paulo",
+        state="SP",
+        zip_code="01234-567"
+    )
+    async_db_session.add(user_address)
+    await async_db_session.commit()
     
     # Cria um usuário afiliado
     affiliate_user = User(
@@ -75,6 +86,18 @@ async def user_test_data(async_db_session):
     async_db_session.add(affiliate_user)
     await async_db_session.commit()
     await async_db_session.refresh(affiliate_user)
+
+    # Adiciona endereço ao afiliado
+    affiliate_address = UserAddress(
+        user_id=affiliate_user.id,
+        street="Rua do Afiliado",
+        number="456",
+        city="São Paulo",
+        state="SP",
+        zip_code="04567-890"
+    )
+    async_db_session.add(affiliate_address)
+    await async_db_session.commit()
     
     # Cria registro de afiliado para o usuário afiliado
     affiliate = Affiliate(
@@ -102,6 +125,18 @@ async def user_test_data(async_db_session):
     async_db_session.add(admin_user)
     await async_db_session.commit()
     await async_db_session.refresh(admin_user)
+
+    # Adiciona endereço ao admin
+    admin_address = UserAddress(
+        user_id=admin_user.id,
+        street="Rua do Admin",
+        number="789",
+        city="São Paulo",
+        state="SP",
+        zip_code="07890-123"
+    )
+    async_db_session.add(admin_address)
+    await async_db_session.commit()
     
     # Cria um usuário inativo (desativado)
     inactive_user = User(
@@ -179,7 +214,14 @@ async def test_update_user_profile_data(async_db_session, user_test_data):
     update_data = {
         "name": "Nome Atualizado",
         "phone": "11944332211",
-        "address": "Nova Rua de Teste, 456"
+        "address": {
+            "street": "Nova Rua de Teste",
+            "number": "456",
+            "neighborhood": "Bairro Teste",
+            "city": "São Paulo",
+            "state": "SP",
+            "zip_code": "04567-890"
+        }
     }
     
     # Atualiza o perfil do usuário
@@ -190,7 +232,8 @@ async def test_update_user_profile_data(async_db_session, user_test_data):
     assert updated_user is not None
     assert updated_user["name"] == update_data["name"]
     assert updated_user["phone"] == update_data["phone"]
-    assert updated_user["address"] == update_data["address"]
+    assert updated_user["address"]["street"] == update_data["address"]["street"]
+    assert updated_user["address"]["number"] == update_data["address"]["number"]
     
     # Verifica persistência consultando o banco
     query = select(User).where(User.id == user.id)
@@ -199,7 +242,14 @@ async def test_update_user_profile_data(async_db_session, user_test_data):
     
     assert db_user.name == update_data["name"]
     assert db_user.phone == update_data["phone"]
-    assert db_user.address == update_data["address"]
+    
+    # Verifica o endereço no banco
+    query = select(UserAddress).where(UserAddress.user_id == user.id)
+    result = await async_db_session.execute(query)
+    db_address = result.scalar_one()
+    
+    assert db_address.street == update_data["address"]["street"]
+    assert db_address.number == update_data["address"]["number"]
     
     # Tenta atualizar usuário inexistente
     success, error, non_existent = await update_user_profile_data(async_db_session, 9999, update_data)

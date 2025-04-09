@@ -30,6 +30,7 @@ Dependências:
 from aiohttp import web
 from sqlalchemy import select
 import bcrypt
+import json
 
 from app.config.settings import DB_SESSION_KEY
 from app.middleware.authorization_middleware import require_auth
@@ -108,14 +109,47 @@ async def update_profile(request: web.Request) -> web.Response:
         # Obtém o ID do usuário autenticado
         user_id = request["user"]["id"]
         
-        # Obtém os dados da requisição
-        data = await request.json()
-        
-        if not data:
+        # Obtém e valida os dados da requisição
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
             return web.json_response(
-                {"error": "Nenhum dado fornecido para atualização"},
+                {"error": "JSON inválido na requisição"},
                 status=400
             )
+        
+        if not isinstance(data, dict):
+            return web.json_response(
+                {"error": "Dados devem ser um objeto JSON válido"},
+                status=400
+            )
+
+        # Validação básica dos campos obrigatórios
+        required_fields = ["name"]  # Removido "phone" dos campos obrigatórios
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            return web.json_response(
+                {"error": f"Campos obrigatórios ausentes: {', '.join(missing_fields)}"},
+                status=400
+            )
+
+        # Validação do formato do endereço se fornecido
+        if "address" in data:
+            required_address_fields = ["street", "number", "city", "state", "zip_code", "neighborhood"]
+            if not isinstance(data["address"], dict):
+                return web.json_response(
+                    {"error": "Campo 'address' deve ser um objeto"},
+                    status=400
+                )
+            missing_address_fields = [
+                field for field in required_address_fields 
+                if field not in data["address"]
+            ]
+            if missing_address_fields:
+                return web.json_response(
+                    {"error": f"Campos obrigatórios do endereço ausentes: {', '.join(missing_address_fields)}"},
+                    status=400
+                )
         
         # Atualiza os dados do perfil
         session = request.app[DB_SESSION_KEY]
@@ -138,7 +172,7 @@ async def update_profile(request: web.Request) -> web.Response:
         
     except Exception as e:
         return web.json_response(
-            {"error": f"Erro ao atualizar perfil: {str(e)}"},
+            {"error": "Erro interno ao processar a atualização do perfil"},
             status=500
         )
 

@@ -18,6 +18,7 @@ Classes:
     APIToken: Representa tokens de API associados a usuários.
     ShippingAddress: Representa o endereço de entrega de um pedido.
     RefreshToken: Representa um token de atualização (refresh token) usado para gerar novos access tokens.
+    UserAddress: Representa o endereço de um usuário.
 
 Functions:
     create_database(db_url: str) -> None:
@@ -53,6 +54,39 @@ AffiliateBalance = None  # Será definida externamente
 
 # ========== Declaramos nossas Entidades (Models) como antes: ==========
 
+class UserAddress(Base):
+    """
+    Representa o endereço de um usuário.
+
+    Attributes:
+        id (int): ID único do endereço
+        user_id (int): ID do usuário associado
+        street (str): Nome da rua
+        number (str): Número do endereço
+        complement (str): Complemento do endereço
+        neighborhood (str): Bairro
+        city (str): Cidade
+        state (str): Estado
+        zip_code (str): CEP
+        created_at (datetime): Data de criação do registro
+        updated_at (datetime): Data da última atualização
+    """
+    __tablename__ = 'user_addresses'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete="CASCADE"), nullable=False)
+    street = Column(String(255), nullable=False)
+    number = Column(String(20), nullable=False)
+    complement = Column(String(255), nullable=True)
+    neighborhood = Column(String(255), nullable=True)
+    city = Column(String(255), nullable=False)
+    state = Column(String(2), nullable=False)
+    zip_code = Column(String(10), nullable=True)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
+
+    user = relationship("User", back_populates="addresses")
+
+
 class User(Base):
     """
     Representa um usuário no sistema.
@@ -65,7 +99,6 @@ class User(Base):
         password_hash (str): Hash da senha do usuário.
         role (Enum): Papel do usuário (admin, manager, affiliate, user).
         phone (str): Número de telefone do usuário.
-        address (str): Endereço do usuário.
         active (bool): Indica se o usuário está ativo no sistema.
         deactivation_reason (str): Razão da desativação da conta.
         deletion_requested (bool): Indica se o usuário solicitou a exclusão da conta.
@@ -77,17 +110,16 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), nullable=False, unique=True)
-    cpf = Column(String(11), nullable=False, unique=True)  # Novo campo para CPF
+    cpf = Column(String(11), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
     role = Column(Enum('admin', 'manager', 'affiliate', 'user', name='user_roles'), nullable=False)
-    phone = Column(String(20), nullable=True)  # Adicionando campo phone
-    address = Column(String(255), nullable=True)  # Adicionando campo address
+    phone = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=TIMEZONE)
     updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
-    active = Column(Boolean, default=True)  # Adicionando campo active
-    deactivation_reason = Column(String(255), nullable=True)  # Razão da desativação
-    deletion_requested = Column(Boolean, default=False)  # Flag para solicitação de exclusão
-    deletion_request_date = Column(DateTime, nullable=True)  # Data da solicitação de exclusão
+    active = Column(Boolean, default=True)
+    deactivation_reason = Column(String(255), nullable=True)
+    deletion_requested = Column(Boolean, default=False)
+    deletion_request_date = Column(DateTime, nullable=True)
 
     orders = relationship("Order", back_populates="user")
     affiliate = relationship("Affiliate", uselist=False, back_populates="user")
@@ -95,6 +127,7 @@ class User(Base):
     logs = relationship("Log", order_by="Log.id", back_populates="user")
     api_tokens = relationship("APIToken", order_by="APIToken.id", back_populates="user")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    addresses = relationship("UserAddress", back_populates="user", cascade="all, delete-orphan")
 
     @property
     def is_active(self):

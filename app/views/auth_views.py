@@ -138,24 +138,27 @@ async def login_user(request: web.Request):
         identifier = data.get("identifier")  # Pode ser email ou CPF
         password = data.get("password")
         
-        user = await auth_service.authenticate_user(identifier, password)
-        if not user:
-            return web.json_response({"error": "Credenciais inválidas"}, status=401)
+        try:
+            user = await auth_service.authenticate_user(identifier, password)
+            if not user:
+                return web.json_response({"error": "Credenciais inválidas"}, status=401)
 
-        # Gera o token de acesso
-        access_token = auth_service.generate_jwt_token(user)
-        
-        # Gera o refresh token
-        refresh_token = await auth_service.generate_refresh_token(user)
-        
-        return web.json_response({
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "Bearer",
-            "expires_in": JWT_EXPIRATION_MINUTES * 60,  # Em segundos
-            "user_id": user.id,
-            "user_role": user.role
-        }, status=200)
+            # Gera o token de acesso
+            access_token = auth_service.generate_jwt_token(user)
+            
+            # Gera o refresh token
+            refresh_token = await auth_service.generate_refresh_token(user)
+            
+            return web.json_response({
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "Bearer",
+                "expires_in": JWT_EXPIRATION_MINUTES * 60,  # Em segundos
+                "user_id": user.id,
+                "user_role": user.role
+            }, status=200)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=401)
     except Exception as e:
         return web.json_response({"error": f"Erro interno: {str(e)}"}, status=500)
 

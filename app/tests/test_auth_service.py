@@ -13,6 +13,9 @@ Functions:
     test_create_user(async_db_session):
         Testa a criação de um usuário com sucesso.
 
+    test_create_user_with_address(async_db_session):
+        Testa a criação de um usuário com endereço.
+
     test_authenticate_user_success(async_db_session):
         Testa a autenticação de um usuário com credenciais válidas.
 
@@ -41,6 +44,8 @@ Functions:
 import pytest
 import pytest_asyncio
 from app.services.auth_service import AuthService
+from app.models.database import User, UserAddress
+from sqlalchemy import select
 
 @pytest.mark.asyncio
 async def test_create_user(async_db_session):
@@ -66,6 +71,94 @@ async def test_create_user(async_db_session):
     assert user.id is not None
     assert user.email == "test@example.com"
     assert user.role == "admin"
+
+@pytest.mark.asyncio
+async def test_create_user_with_address(async_db_session):
+    """
+    Testa a criação de um usuário com endereço.
+
+    Args:
+        async_db_session: Sessão de banco de dados assíncrona fornecida pelo fixture.
+
+    Asserts:
+        Verifica se o usuário foi criado com sucesso.
+        Verifica se o endereço foi associado corretamente ao usuário.
+        Verifica se todos os campos do endereço foram salvos corretamente.
+    """
+    auth_service = AuthService(async_db_session)
+    
+    # Dados do endereço
+    address_data = {
+        "street": "Rua dos Testes",
+        "number": "123",
+        "complement": "Apto 45",
+        "neighborhood": "Bairro Teste",
+        "city": "São Paulo",
+        "state": "SP",
+        "zip_code": "01234-567"
+    }
+    
+    # Criar usuário com endereço
+    user = await auth_service.create_user(
+        name="Test User with Address",
+        email="test.address@example.com",
+        cpf="98765432100",
+        password="testpass123",
+        role="user",
+        address=address_data
+    )
+
+    assert user.id is not None
+    assert user.email == "test.address@example.com"
+    
+    # Buscar o endereço do usuário
+    result = await async_db_session.execute(
+        select(UserAddress).where(UserAddress.user_id == user.id)
+    )
+    address = result.scalar_one_or_none()
+    
+    # Verificar se o endereço foi criado e está correto
+    assert address is not None
+    assert address.street == address_data["street"]
+    assert address.number == address_data["number"]
+    assert address.complement == address_data["complement"]
+    assert address.neighborhood == address_data["neighborhood"]
+    assert address.city == address_data["city"]
+    assert address.state == address_data["state"]
+    assert address.zip_code == address_data["zip_code"]
+
+@pytest.mark.asyncio
+async def test_create_user_with_invalid_address(async_db_session):
+    """
+    Testa a criação de um usuário com dados de endereço inválidos.
+
+    Args:
+        async_db_session: Sessão de banco de dados assíncrona fornecida pelo fixture.
+
+    Asserts:
+        Verifica se a tentativa de criar usuário com endereço inválido gera erro.
+        Verifica se a mensagem de erro é apropriada.
+    """
+    auth_service = AuthService(async_db_session)
+    
+    # Dados do endereço incompletos
+    invalid_address = {
+        "street": "Rua dos Testes",
+        "number": "123"
+        # Faltando campos obrigatórios
+    }
+    
+    with pytest.raises(ValueError) as exc_info:
+        await auth_service.create_user(
+            name="Test User Invalid Address",
+            email="test.invalid@example.com",
+            cpf="12345678901",
+            password="testpass123",
+            role="user",
+            address=invalid_address
+        )
+    
+    assert "Campos obrigatórios de endereço faltando" in str(exc_info.value)
 
 @pytest.mark.asyncio
 async def test_authenticate_user_success(async_db_session):
