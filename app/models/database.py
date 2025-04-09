@@ -103,6 +103,7 @@ class User(Base):
         deactivation_reason (str): Razão da desativação da conta.
         deletion_requested (bool): Indica se o usuário solicitou a exclusão da conta.
         deletion_request_date (datetime): Data da solicitação de exclusão da conta.
+        notification_preferences (dict): Preferências de notificação do usuário.
         created_at (datetime): Data de criação do registro.
         updated_at (datetime): Data da última atualização do registro.
     """
@@ -120,6 +121,7 @@ class User(Base):
     deactivation_reason = Column(String(255), nullable=True)
     deletion_requested = Column(Boolean, default=False)
     deletion_request_date = Column(DateTime, nullable=True)
+    _notification_preferences = Column("notification_preferences", Text, nullable=True)  # Armazena JSON
 
     orders = relationship("Order", back_populates="user")
     affiliate = relationship("Affiliate", uselist=False, back_populates="user")
@@ -128,6 +130,31 @@ class User(Base):
     api_tokens = relationship("APIToken", order_by="APIToken.id", back_populates="user")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     addresses = relationship("UserAddress", back_populates="user", cascade="all, delete-orphan")
+
+    @property
+    def notification_preferences(self) -> dict:
+        """
+        Desserializa as preferências de notificação do formato JSON.
+        
+        Returns:
+            dict: Preferências de notificação do usuário
+        """
+        if self._notification_preferences:
+            return json.loads(self._notification_preferences)
+        return {}
+        
+    @notification_preferences.setter
+    def notification_preferences(self, value: dict):
+        """
+        Serializa as preferências de notificação para JSON antes de salvar.
+        
+        Args:
+            value (dict): Novas preferências de notificação
+        """
+        if value is not None:
+            self._notification_preferences = json.dumps(value)
+        else:
+            self._notification_preferences = None
 
     @property
     def is_active(self):

@@ -232,9 +232,6 @@ async def toggle_user_status(
     """
     Bloqueia ou desbloqueia um usuário no sistema.
     
-    Em nosso modelo atual, utilizamos o status do afiliado como forma de bloqueio.
-    Para usuários não afiliados, precisaremos adicionar um campo de status na tabela Users.
-    
     Args:
         session (AsyncSession): Sessão do banco de dados
         user_id (int): ID do usuário a ser bloqueado/desbloqueado
@@ -271,8 +268,14 @@ async def toggle_user_status(
             affiliate.request_status = 'blocked' if block else 'approved'
             session.add(affiliate)
     
-    # TODO: Para usuários não afiliados, precisaremos adicionar um campo is_active na tabela Users
-    # e atualizá-lo aqui
+    # Atualiza o status do usuário na tabela Users
+    user.active = not block
+    if block:
+        user.deactivation_reason = "Bloqueado por administrador"
+    else:
+        user.deactivation_reason = None
+    
+    session.add(user)
     
     # Cria um log da alteração
     action = f"{'Bloqueou' if block else 'Desbloqueou'} o usuário {user_id}"
