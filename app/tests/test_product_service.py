@@ -79,10 +79,11 @@ async def test_list_products(async_db_session):
     # Listar todos os produtos
     result = await product_service.list_products()
     assert result["success"] is True
-    assert len(result["data"]) == 3
+    assert "products" in result["data"]
+    assert len(result["data"]["products"]) == 3
     
     # Verificar formato dos dados
-    for product in result["data"]:
+    for product in result["data"]["products"]:
         assert "id" in product
         assert "name" in product
         assert "description" in product
@@ -93,11 +94,92 @@ async def test_list_products(async_db_session):
     # Listar produtos por categoria
     result = await product_service.list_products(cat1.id)
     assert result["success"] is True
-    assert len(result["data"]) == 2
+    assert len(result["data"]["products"]) == 2
     
     # Verificar que todos os produtos são da categoria correta
-    for product in result["data"]:
+    for product in result["data"]["products"]:
         assert product["category_id"] == cat1.id
+    
+    # Verificar metadados de paginação
+    assert "meta" in result["data"]
+    assert "page" in result["data"]["meta"]
+    assert "page_size" in result["data"]["meta"]
+    assert "total_count" in result["data"]["meta"]
+    assert "total_pages" in result["data"]["meta"]
+    assert result["data"]["meta"]["page"] == 1  # Página padrão
+    assert result["data"]["meta"]["total_count"] == 2  # Dois produtos na categoria 1
+
+@pytest.mark.asyncio
+async def test_list_products_with_pagination(async_db_session):
+    """
+    Testa a paginação na listagem de produtos.
+
+    Args:
+        async_db_session: Sessão de banco de dados assíncrona.
+        
+    Asserts:
+        - Verifica se a paginação funciona corretamente.
+        - Verifica se os metadados de paginação são calculados corretamente.
+        - Verifica se offset e limit estão sendo aplicados corretamente.
+    """
+    # Criar categoria
+    category = Category(name="Categoria Paginação")
+    async_db_session.add(category)
+    await async_db_session.commit()
+    await async_db_session.refresh(category)
+    
+    # Criar 10 produtos para testar paginação
+    products = []
+    for i in range(1, 11):
+        products.append(
+            Product(
+                name=f"Produto Paginação {i}",
+                description=f"Descrição {i}",
+                price=100.0 * i,
+                stock=10 * i,
+                category_id=category.id
+            )
+        )
+    async_db_session.add_all(products)
+    await async_db_session.commit()
+    
+    product_service = ProductService(async_db_session)
+    
+    # Testar primeira página com 3 itens por página
+    result = await product_service.list_products(None, page=1, page_size=3)
+    assert result["success"] is True
+    assert len(result["data"]["products"]) == 3
+    assert result["data"]["meta"]["page"] == 1
+    assert result["data"]["meta"]["page_size"] == 3
+    assert result["data"]["meta"]["total_count"] == 10
+    assert result["data"]["meta"]["total_pages"] == 4  # 10 itens / 3 por página = 4 páginas (arredondado para cima)
+    
+    # Verificar a segunda página
+    result2 = await product_service.list_products(None, page=2, page_size=3)
+    assert result2["success"] is True
+    assert len(result2["data"]["products"]) == 3
+    
+    # Verificar que não há itens duplicados entre páginas
+    page1_ids = [p["id"] for p in result["data"]["products"]]
+    page2_ids = [p["id"] for p in result2["data"]["products"]]
+    for pid in page2_ids:
+        assert pid not in page1_ids
+    
+    # Testar última página (deve ter apenas 1 item)
+    result4 = await product_service.list_products(None, page=4, page_size=3)
+    assert result4["success"] is True
+    assert len(result4["data"]["products"]) == 1
+    
+    # Testar categoria específica com paginação
+    result_cat = await product_service.list_products(category.id, page=1, page_size=5)
+    assert result_cat["success"] is True
+    assert len(result_cat["data"]["products"]) == 5
+    assert result_cat["data"]["meta"]["total_count"] == 10
+    assert result_cat["data"]["meta"]["total_pages"] == 2
+    
+    # Verificar que todos os produtos são da categoria correta
+    for product in result_cat["data"]["products"]:
+        assert product["category_id"] == category.id
 
 @pytest.mark.asyncio
 async def test_get_product(async_db_session):

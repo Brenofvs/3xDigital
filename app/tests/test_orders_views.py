@@ -18,6 +18,7 @@ Test Functions:
     - test_list_orders_as_user_forbidden(test_client_fixture)
     - test_update_order_status_as_admin(test_client_fixture)
     - test_delete_order_as_admin(test_client_fixture)
+    - test_list_orders_with_pagination(test_client_fixture)
 """
 
 import pytest
@@ -123,7 +124,7 @@ async def test_list_orders_as_admin(test_client_fixture):
     Testa a listagem de todos os pedidos como administrador.
 
     O teste utiliza um token de administrador para acessar o endpoint de listagem de pedidos,
-    que deve retornar status HTTP 200 e uma lista de pedidos.
+    que deve retornar status HTTP 200 e uma lista de pedidos com metadados de paginação.
 
     Args:
         test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
@@ -131,6 +132,7 @@ async def test_list_orders_as_admin(test_client_fixture):
     Asserts:
         - Status HTTP 200.
         - A resposta contém a chave 'orders'.
+        - A resposta contém metadados de paginação.
     """
     client = test_client_fixture
     token = await get_admin_token(client)
@@ -140,6 +142,14 @@ async def test_list_orders_as_admin(test_client_fixture):
     assert resp.status == 200, "Admin deve conseguir listar todos os pedidos."
     data = await resp.json()
     assert "orders" in data, "Chave 'orders' ausente na resposta."
+    
+    # Verifica os metadados de paginação
+    assert "meta" in data, "Metadados de paginação ausentes."
+    assert "page" in data["meta"]
+    assert "page_size" in data["meta"]
+    assert "total_count" in data["meta"]
+    assert "total_pages" in data["meta"]
+    assert data["meta"]["page"] == 1  # Página padrão
 
 
 @pytest.mark.asyncio
@@ -269,3 +279,88 @@ async def test_delete_order_as_admin(test_client_fixture):
     assert delete_resp.status == 200, "Admin deve conseguir deletar o pedido."
     delete_data = await delete_resp.json()
     assert "Pedido deletado com sucesso" in delete_data["message"], "Mensagem de sucesso ausente."
+
+
+@pytest.mark.asyncio
+async def test_list_orders_with_pagination(test_client_fixture):
+    """
+    Testa a paginação na listagem de pedidos.
+
+    Cria vários pedidos e testa a paginação com diferentes parâmetros.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - Os parâmetros de paginação (page, page_size) funcionam corretamente.
+        - O filtro por status funciona corretamente.
+        - Os metadados de paginação correspondem aos parâmetros fornecidos.
+    """
+    client = test_client_fixture
+    admin_token = await get_admin_token(client)
+
+    # 1. Cria um produto para usar nos pedidos
+    prod_resp = await client.post(
+        "/products",
+        json={
+            "name": "Produto para Pedidos",
+            "description": "Produto para testar paginação de pedidos",
+            "price": 50.00,
+            "stock": 100  # Estoque suficiente para vários pedidos
+        },
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert prod_resp.status == 201, "Falha ao criar produto para testes."
+    prod_data = await prod_resp.json()
+    product_id = prod_data["product"]["id"]
+
+    # 2. Cria vários pedidos (5)
+    for i in range(5):
+        await client.post(
+            "/orders",
+            json={"items": [{"product_id": product_id, "quantity": 1}]},
+            headers={"Authorization": f"Bearer {admin_token}"}
+        )
+
+    # 3. Testa a paginação: primeira página com 2 itens por página
+    resp = await client.get(
+        "/orders?page=1&page_size=2",
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert resp.status == 200
+    data = await resp.json()
+    
+    assert len(data["orders"]) <= 2  # Não mais que o page_size
+    assert data["meta"]["page"] == 1
+    assert data["meta"]["page_size"] == 2
+    assert data["meta"]["total_count"] >= 5  # Pelo menos os 5 que criamos
+    
+    # 4. Testa a segunda página
+    resp = await client.get(
+        "/orders?page=2&page_size=2",
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert resp.status == 200
+    data2 = await resp.json()
+    
+    assert len(data2["orders"]) <= 2
+    assert data2["meta"]["page"] == 2
+    
+    # 5. Verifica se os pedidos da página 2 são diferentes dos da página 1
+    page1_ids = [o["id"] for o in data["orders"]]
+    page2_ids = [o["id"] for o in data2["orders"]]
+    
+    # Garante que não há pedidos duplicados entre as páginas
+    for oid in page2_ids:
+        assert oid not in page1_ids
+    
+    # 6. Testa o filtro por status (todos os pedidos devem ter status inicial "processing")
+    resp = await client.get(
+        "/orders?status=processing",
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert resp.status == 200
+    status_data = await resp.json()
+    
+    assert len(status_data["orders"]) >= 5
+    assert all(order["status"] == "processing" for order in status_data["orders"])

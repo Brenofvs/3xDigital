@@ -15,12 +15,12 @@ import bcrypt
 import jwt
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, Dict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
-from app.models.database import User, RefreshToken
+from app.models.database import User, RefreshToken, UserAddress
 from app.config.settings import (
     JWT_SECRET_KEY, TIMEZONE, get_current_timezone, 
     JWT_EXPIRATION_MINUTES, REFRESH_TOKEN_EXPIRATION_DAYS
@@ -52,21 +52,23 @@ class AuthService:
         """
         self.db_session = db_session
 
-    async def create_user(self, name: str, email: str, cpf: str, password: str, role: str = "affiliate") -> User:
+    async def create_user(self, name: str, email: str, cpf: str, password: str, role: str = "affiliate", address: Optional[Dict] = None) -> User:
         """
         Cria um novo usuário com hash de senha de forma assíncrona.
 
         Args:
             name (str): Nome do usuário.
             email (str): E-mail do usuário.
+            cpf (str): CPF do usuário.
             password (str): Senha do usuário.
             role (str, optional): Papel do usuário. Padrão é "affiliate".
+            address (Optional[Dict], optional): Dados de endereço do usuário. Padrão é None.
 
         Returns:
             User: Objeto do usuário criado.
 
         Raises:
-            ValueError: Se o e-mail já estiver registrado.
+            ValueError: Se o e-mail já estiver registrado ou se dados de endereço estiverem incompletos.
             Exception: Caso ocorra algum erro na criação do usuário.
         """
         result = await self.db_session.execute(select(User).where((User.email == email) | (User.cpf == cpf)))
@@ -84,8 +86,31 @@ class AuthService:
             password_hash=password_hash,
             role=role
         )
+        
         try:
             self.db_session.add(new_user)
+            await self.db_session.flush()
+            
+            # Se houver dados de endereço, verificar se contém campos obrigatórios
+            if address:
+                required_fields = ['street', 'number', 'city', 'state']
+                if not all(field in address for field in required_fields):
+                    await self.db_session.rollback()
+                    raise ValueError("Campos obrigatórios de endereço faltando")
+                
+                # Criar o endereço associado ao usuário
+                user_address = UserAddress(
+                    user_id=new_user.id,
+                    street=address['street'],
+                    number=address['number'],
+                    complement=address.get('complement'),
+                    neighborhood=address.get('neighborhood'),
+                    city=address['city'],
+                    state=address['state'],
+                    zip_code=address.get('zip_code')
+                )
+                self.db_session.add(user_address)
+            
             await self.db_session.commit()
             await self.db_session.refresh(new_user)
             return new_user

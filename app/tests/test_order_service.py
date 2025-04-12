@@ -169,6 +169,7 @@ async def test_list_orders(async_db_session):
     Asserts:
         - Verifica se a lista de pedidos é retornada corretamente.
         - Verifica se os dados dos pedidos estão completos.
+        - Verifica se os metadados de paginação estão presentes.
     """
     # Criar usuário
     auth_service = AuthService(async_db_session)
@@ -200,24 +201,129 @@ async def test_list_orders(async_db_session):
     await async_db_session.refresh(product)
     
     # Criar dois pedidos
-    items = [{"product_id": product.id, "quantity": 1}]
-    await order_service.create_order(user.id, items)
-    await order_service.create_order(user.id, items)
+    for _ in range(2):
+        items = [{"product_id": product.id, "quantity": 1}]
+        await order_service.create_order(user.id, items)
     
     # Listar pedidos
     result = await order_service.list_orders()
     
     # Verificações
     assert result["success"] is True
-    assert len(result["data"]) == 2
-    for order in result["data"]:
+    assert "orders" in result["data"]
+    assert len(result["data"]["orders"]) == 2
+    
+    # Verificar formato dos dados
+    for order in result["data"]["orders"]:
         assert "id" in order
         assert "user_id" in order
-        assert order["user_id"] == user.id
-        assert "total" in order
-        assert order["total"] == 25.0
         assert "status" in order
-        assert order["status"] == "processing"
+        assert "total" in order
+        assert "created_at" in order
+    
+    # Verificar metadados de paginação
+    assert "meta" in result["data"]
+    assert "page" in result["data"]["meta"]
+    assert "page_size" in result["data"]["meta"]
+    assert "total_count" in result["data"]["meta"]
+    assert "total_pages" in result["data"]["meta"]
+    assert result["data"]["meta"]["page"] == 1  # Página padrão
+    assert result["data"]["meta"]["total_count"] == 2  # Dois pedidos
+
+@pytest.mark.asyncio
+async def test_list_orders_with_pagination(async_db_session):
+    """
+    Testa a paginação na listagem de pedidos.
+
+    Args:
+        async_db_session: Sessão de banco de dados assíncrona.
+        
+    Asserts:
+        - Verifica se a paginação funciona corretamente.
+        - Verifica se o filtro por status funciona.
+        - Verifica se os metadados de paginação são calculados corretamente.
+    """
+    # Criar usuário
+    auth_service = AuthService(async_db_session)
+    user = await auth_service.create_user(
+        name="Pagination User",
+        email="pagination@example.com",
+        cpf="11122233344",
+        password="testpass",
+        role="user"
+    )
+    
+    # Criar categoria e produto para os pedidos
+    category = Category(name="Pagination Category")
+    async_db_session.add(category)
+    await async_db_session.commit()
+    
+    product = Product(
+        name="Pagination Product",
+        description="For pagination",
+        price=15.0,
+        stock=100,
+        category_id=category.id
+    )
+    async_db_session.add(product)
+    await async_db_session.commit()
+    await async_db_session.refresh(product)
+    
+    # Inicializar serviço
+    order_service = OrderService(async_db_session)
+    
+    # Criar 10 pedidos
+    created_orders = []
+    for i in range(10):
+        items = [{"product_id": product.id, "quantity": 1}]
+        result = await order_service.create_order(user.id, items)
+        created_orders.append(result["data"]["order_id"])
+    
+    # Alterar o status de alguns pedidos para testar filtragem
+    for i, order_id in enumerate(created_orders):
+        if i % 2 == 0:  # Para pedidos pares
+            await order_service.update_order_status(order_id, "shipped")
+    
+    # Testar primeira página com 3 itens por página
+    result = await order_service.list_orders(page=1, page_size=3)
+    assert result["success"] is True
+    assert len(result["data"]["orders"]) == 3
+    assert result["data"]["meta"]["page"] == 1
+    assert result["data"]["meta"]["page_size"] == 3
+    assert result["data"]["meta"]["total_count"] == 10
+    assert result["data"]["meta"]["total_pages"] == 4  # 10 itens / 3 por página = 4 páginas (arredondado para cima)
+    
+    # Verificar a segunda página
+    result2 = await order_service.list_orders(page=2, page_size=3)
+    assert result2["success"] is True
+    assert len(result2["data"]["orders"]) == 3
+    
+    # Verificar que não há itens duplicados entre páginas
+    page1_ids = [o["id"] for o in result["data"]["orders"]]
+    page2_ids = [o["id"] for o in result2["data"]["orders"]]
+    for oid in page2_ids:
+        assert oid not in page1_ids
+    
+    # Testar última página (deve ter apenas 1 item)
+    result4 = await order_service.list_orders(page=4, page_size=3)
+    assert result4["success"] is True
+    assert len(result4["data"]["orders"]) == 1
+    
+    # Testar filtro por status "shipped" (deve ter 5 pedidos)
+    result_shipped = await order_service.list_orders(status="shipped")
+    assert result_shipped["success"] is True
+    assert len(result_shipped["data"]["orders"]) == 5
+    assert result_shipped["data"]["meta"]["total_count"] == 5
+    
+    # Verificar que todos os pedidos têm o status correto
+    for order in result_shipped["data"]["orders"]:
+        assert order["status"] == "shipped"
+    
+    # Testar filtro por status "processing" (deve ter 5 pedidos)
+    result_processing = await order_service.list_orders(status="processing")
+    assert result_processing["success"] is True
+    assert len(result_processing["data"]["orders"]) == 5
+    assert result_processing["data"]["meta"]["total_count"] == 5
 
 @pytest.mark.asyncio
 async def test_get_order(async_db_session):

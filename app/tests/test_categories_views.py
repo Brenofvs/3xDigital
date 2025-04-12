@@ -13,6 +13,7 @@ Test Functions:
     - test_update_category_success(test_client_fixture)
     - test_delete_category_success(test_client_fixture)
     - test_list_categories(test_client_fixture)
+    - test_list_categories_with_pagination(test_client_fixture)
 """
 
 import pytest
@@ -129,6 +130,7 @@ async def test_list_categories(test_client_fixture):
     Asserts:
         - O endpoint retorna status HTTP 200.
         - A lista de categorias contém ao menos os itens cadastrados.
+        - A resposta contém metadados de paginação.
     """
     client = test_client_fixture
     token = await get_admin_token(client)
@@ -142,6 +144,76 @@ async def test_list_categories(test_client_fixture):
                             headers={"Authorization": f"Bearer {token}"})
     assert resp.status == 200
     data = await resp.json()
+    
+    # Verifica a estrutura dos dados
     assert "categories" in data
     assert isinstance(data["categories"], list)
     assert len(data["categories"]) >= 2
+    
+    # Verifica os metadados de paginação
+    assert "meta" in data
+    assert "page" in data["meta"]
+    assert "page_size" in data["meta"]
+    assert "total_count" in data["meta"]
+    assert "total_pages" in data["meta"]
+    assert data["meta"]["page"] == 1  # Página padrão
+
+@pytest.mark.asyncio
+async def test_list_categories_with_pagination(test_client_fixture):
+    """
+    Testa a paginação e pesquisa na listagem de categorias.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - Os parâmetros de paginação (page, page_size) funcionam corretamente.
+        - O filtro de pesquisa por nome funciona corretamente.
+        - Os metadados de paginação correspondem aos parâmetros fornecidos.
+    """
+    client = test_client_fixture
+    token = await get_admin_token(client)
+    
+    # Cria várias categorias para testar paginação
+    category_names = ["Esporte Aquático", "Esporte Radical", "Esporte Coletivo", 
+                       "Esporte Individual", "Esporte Eletrônico"]
+    for name in category_names:
+        await client.post("/categories", json={"name": name},
+                         headers={"Authorization": f"Bearer {token}"})
+    
+    # Testa a primeira página com 2 itens por página
+    resp = await client.get("/categories?page=1&page_size=2",
+                           headers={"Authorization": f"Bearer {token}"})
+    assert resp.status == 200
+    data = await resp.json()
+    
+    assert len(data["categories"]) <= 2  # Não mais que o page_size
+    assert data["meta"]["page"] == 1
+    assert data["meta"]["page_size"] == 2
+    assert data["meta"]["total_count"] >= 5  # Pelo menos as 5 que criamos
+    
+    # Testa a segunda página
+    resp = await client.get("/categories?page=2&page_size=2",
+                           headers={"Authorization": f"Bearer {token}"})
+    assert resp.status == 200
+    data2 = await resp.json()
+    
+    assert len(data2["categories"]) <= 2
+    assert data2["meta"]["page"] == 2
+    
+    # Verifica se as categorias da página 2 são diferentes das da página 1
+    page1_ids = [c["id"] for c in data["categories"]]
+    page2_ids = [c["id"] for c in data2["categories"]]
+    
+    # Garante que não há categorias duplicadas entre as páginas
+    for cid in page2_ids:
+        assert cid not in page1_ids
+    
+    # Testa o filtro de pesquisa
+    resp = await client.get("/categories?search=Radical",
+                           headers={"Authorization": f"Bearer {token}"})
+    assert resp.status == 200
+    search_data = await resp.json()
+    
+    assert len(search_data["categories"]) >= 1
+    assert any("Radical" in cat["name"] for cat in search_data["categories"])

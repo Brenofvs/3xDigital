@@ -13,6 +13,7 @@ Test Functions:
     - test_update_product_success(test_client_fixture)
     - test_delete_product_success(test_client_fixture)
     - test_list_products(test_client_fixture)
+    - test_list_products_with_pagination(test_client_fixture)
 """
 
 import pytest
@@ -186,6 +187,7 @@ async def test_list_products(test_client_fixture):
         - O endpoint retorna status HTTP 200.
         - A lista de produtos contém os itens cadastrados.
         - Cada produto possui o campo 'image_url'.
+        - A resposta contém metadados de paginação.
     """
     client = test_client_fixture
     token = await get_admin_token(client)
@@ -214,8 +216,78 @@ async def test_list_products(test_client_fixture):
                            headers={"Authorization": f"Bearer {token}"})
     assert resp.status == 200
     data = await resp.json()
+    
+    # Verifica a estrutura dos dados
     assert "products" in data
     assert isinstance(data["products"], list)
     assert len(data["products"]) >= 2
     for prod in data["products"]:
         assert "image_url" in prod
+        
+    # Verifica os metadados de paginação
+    assert "meta" in data
+    assert "page" in data["meta"]
+    assert "page_size" in data["meta"]
+    assert "total_count" in data["meta"]
+    assert "total_pages" in data["meta"]
+    assert data["meta"]["page"] == 1  # Página padrão
+    
+@pytest.mark.asyncio
+async def test_list_products_with_pagination(test_client_fixture):
+    """
+    Testa a paginação na listagem de produtos.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - Os parâmetros de paginação (page, page_size) funcionam corretamente.
+        - Os metadados de paginação correspondem aos parâmetros fornecidos.
+    """
+    client = test_client_fixture
+    token = await get_admin_token(client)
+    
+    # Cria uma categoria para os produtos
+    cat_resp = await client.post("/categories", json={"name": "Eletrônicos"},
+                                headers={"Authorization": f"Bearer {token}"})
+    cat_data = await cat_resp.json()
+    category_id = cat_data["category"]["id"]
+    
+    # Cria vários produtos para testar paginação
+    product_names = ["Produto 1", "Produto 2", "Produto 3", "Produto 4", "Produto 5"]
+    for name in product_names:
+        await client.post("/products", json={
+            "name": name,
+            "description": f"Descrição do {name}",
+            "price": 100.00,
+            "stock": 10,
+            "category_id": category_id
+        }, headers={"Authorization": f"Bearer {token}"})
+    
+    # Testa a primeira página com 2 itens por página
+    resp = await client.get("/products?page=1&page_size=2",
+                           headers={"Authorization": f"Bearer {token}"})
+    assert resp.status == 200
+    data = await resp.json()
+    
+    assert len(data["products"]) <= 2  # Não mais que o page_size
+    assert data["meta"]["page"] == 1
+    assert data["meta"]["page_size"] == 2
+    assert data["meta"]["total_count"] >= 5  # Pelo menos os 5 que criamos
+    
+    # Testa a segunda página
+    resp = await client.get("/products?page=2&page_size=2",
+                           headers={"Authorization": f"Bearer {token}"})
+    assert resp.status == 200
+    data2 = await resp.json()
+    
+    assert len(data2["products"]) <= 2
+    assert data2["meta"]["page"] == 2
+    
+    # Verifica se os produtos da página 2 são diferentes dos da página 1
+    page1_ids = [p["id"] for p in data["products"]]
+    page2_ids = [p["id"] for p in data2["products"]]
+    
+    # Garante que não há produtos duplicados entre as páginas
+    for pid in page2_ids:
+        assert pid not in page1_ids

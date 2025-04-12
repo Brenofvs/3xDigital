@@ -39,20 +39,56 @@ class CategoryService:
         """
         self.db_session = db_session
 
-    async def list_categories(self) -> Dict[str, Union[List[Dict], str, bool]]:
+    async def list_categories(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        search: Optional[str] = None
+    ) -> Dict[str, Union[dict, str, bool]]:
         """
-        Lista todas as categorias cadastradas.
+        Lista todas as categorias cadastradas com suporte a paginação.
+
+        Args:
+            page (int): Número da página (padrão: 1)
+            page_size (int): Tamanho da página (padrão: 20)
+            search (Optional[str]): Termo de busca opcional para filtrar categorias por nome
 
         Returns:
-            Dict[str, Union[List[Dict], str, bool]]: Lista de categorias.
-                Estrutura: {"success": bool, "data": List[Dict], "error": str}
+            Dict[str, Union[dict, str, bool]]: Lista de categorias e metadados.
+                Estrutura: {"success": bool, "data": dict, "error": str}
         """
-        result = await self.db_session.execute(select(Category))
+        # Construção da query base
+        base_query = select(Category)
+        if search:
+            search_pattern = f"%{search}%"
+            base_query = base_query.where(Category.name.ilike(search_pattern))
+        
+        # Consulta para contar o total de categorias
+        count_query = select(func.count()).select_from(base_query.subquery())
+        result = await self.db_session.execute(count_query)
+        total_count = result.scalar_one()
+        
+        # Aplicar paginação e ordenação por nome
+        query = base_query.order_by(Category.name).offset((page - 1) * page_size).limit(page_size)
+        result = await self.db_session.execute(query)
         categories = result.scalars().all()
         
         categories_list = [{"id": c.id, "name": c.name} for c in categories]
         
-        return {"success": True, "data": categories_list, "error": None}
+        # Retornar categorias e metadados de paginação
+        return {
+            "success": True, 
+            "data": {
+                "categories": categories_list,
+                "meta": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_count": total_count,
+                    "total_pages": (total_count + page_size - 1) // page_size
+                }
+            }, 
+            "error": None
+        }
 
     async def get_category(self, category_id: int) -> Dict[str, Union[Dict, str, bool]]:
         """

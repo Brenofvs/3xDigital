@@ -31,13 +31,25 @@ routes = web.RouteTableDef()
 @require_role(["admin", "user", "affiliate"])
 async def list_products(request: web.Request) -> web.Response:
     """
-    Lista todos os produtos cadastrados.
+    Lista todos os produtos cadastrados com suporte a paginação.
+
+    Query params:
+        category_id (int, opcional): Filtra produtos por categoria
+        page (int, opcional): Página de resultados (padrão: 1)
+        page_size (int, opcional): Tamanho da página (padrão: 20)
 
     Returns:
-        web.Response: Resposta JSON contendo a lista de produtos.
+        web.Response: Resposta JSON contendo a lista de produtos e metadados de paginação.
     """
     db = request.app[DB_SESSION_KEY]
+    
+    # Extrai parâmetros da query
     category_id = request.rel_url.query.get("category_id")
+    page = int(request.rel_url.query.get("page", 1))
+    page_size = int(request.rel_url.query.get("page_size", 20))
+    
+    # Limita o tamanho da página para evitar sobrecarga
+    page_size = min(page_size, 100)
     
     # Usar ProductService em vez de acessar o banco diretamente
     product_service = ProductService(db)
@@ -48,9 +60,9 @@ async def list_products(request: web.Request) -> web.Response:
         except ValueError:
             return web.json_response({"error": "ID de categoria inválido"}, status=400)
             
-    result = await product_service.list_products(category_id)
+    result = await product_service.list_products(category_id, page, page_size)
     
-    return web.json_response({"products": result["data"]}, status=200)
+    return web.json_response(result["data"], status=200)
 
 @routes.get("/products/{product_id}")
 @require_role(["admin", "user", "affiliate"])

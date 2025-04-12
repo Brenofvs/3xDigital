@@ -11,7 +11,7 @@ Classes:
 
 from typing import List, Optional, Dict, Union, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.models.database import Order, OrderItem, Product, User, Affiliate, Sale
 
 class OrderService:
@@ -108,15 +108,37 @@ class OrderService:
             "error": None
         }
 
-    async def list_orders(self) -> Dict[str, Union[List[Dict], str, bool]]:
+    async def list_orders(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        status: Optional[str] = None
+    ) -> Dict[str, Union[dict, str, bool]]:
         """
-        Lista todos os pedidos do sistema.
+        Lista todos os pedidos do sistema com suporte a paginação.
+
+        Args:
+            page (int): Número da página (padrão: 1)
+            page_size (int): Tamanho da página (padrão: 20)
+            status (Optional[str]): Filtro opcional por status de pedido
 
         Returns:
-            Dict[str, Union[List[Dict], str, bool]]: Lista de pedidos.
-                Estrutura: {"success": bool, "data": List[Dict], "error": str}
+            Dict[str, Union[dict, str, bool]]: Lista de pedidos e metadados.
+                Estrutura: {"success": bool, "data": dict, "error": str}
         """
-        result = await self.db_session.execute(select(Order))
+        # Construção da query base
+        base_query = select(Order)
+        if status:
+            base_query = base_query.where(Order.status == status)
+        
+        # Consulta para contar o total de pedidos
+        count_query = select(func.count()).select_from(base_query.subquery())
+        result = await self.db_session.execute(count_query)
+        total_count = result.scalar_one()
+        
+        # Aplicar paginação e ordenação por data (mais recentes primeiro)
+        query = base_query.order_by(Order.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+        result = await self.db_session.execute(query)
         orders = result.scalars().all()
 
         orders_list = [
@@ -124,12 +146,26 @@ class OrderService:
                 "id": o.id, 
                 "user_id": o.user_id, 
                 "status": o.status, 
-                "total": o.total
+                "total": o.total,
+                "created_at": o.created_at.isoformat() if o.created_at else None
             } 
             for o in orders
         ]
         
-        return {"success": True, "data": orders_list, "error": None}
+        # Retornar pedidos e metadados de paginação
+        return {
+            "success": True, 
+            "data": {
+                "orders": orders_list,
+                "meta": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_count": total_count,
+                    "total_pages": (total_count + page_size - 1) // page_size
+                }
+            }, 
+            "error": None
+        }
 
     async def get_order(self, order_id: int, user_id: Optional[int] = None, is_admin: bool = False) -> Dict[str, Union[Dict, str, bool]]:
         """

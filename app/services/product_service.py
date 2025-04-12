@@ -14,7 +14,7 @@ import time
 import aiofiles
 from typing import List, Optional, Dict, Union, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.models.database import Product, Category
 
 class ProductService:
@@ -44,24 +44,37 @@ class ProductService:
         """
         self.db_session = db_session
 
-    async def list_products(self, category_id: Optional[int] = None) -> Dict[str, Union[List[Dict], str, bool]]:
+    async def list_products(
+        self, 
+        category_id: Optional[int] = None,
+        page: int = 1,
+        page_size: int = 20
+    ) -> Dict[str, Union[dict, str, bool]]:
         """
-        Lista todos os produtos cadastrados.
+        Lista todos os produtos cadastrados com suporte a paginação.
 
         Args:
             category_id (Optional[int]): Filtra produtos por categoria, se fornecido.
+            page (int): Número da página (padrão: 1)
+            page_size (int): Tamanho da página (padrão: 20)
 
         Returns:
-            Dict[str, Union[List[Dict], str, bool]]: Lista de produtos.
-                Estrutura: {"success": bool, "data": List[Dict], "error": str}
+            Dict[str, Union[dict, str, bool]]: Lista de produtos e metadados.
+                Estrutura: {"success": bool, "data": dict, "error": str}
         """
+        # Construção da query base
+        base_query = select(Product)
         if category_id:
-            result = await self.db_session.execute(
-                select(Product).where(Product.category_id == category_id)
-            )
-        else:
-            result = await self.db_session.execute(select(Product))
-            
+            base_query = base_query.where(Product.category_id == category_id)
+        
+        # Consulta para contar o total de produtos
+        count_query = select(func.count()).select_from(base_query.subquery())
+        result = await self.db_session.execute(count_query)
+        total_count = result.scalar_one()
+        
+        # Aplicar paginação
+        query = base_query.offset((page - 1) * page_size).limit(page_size)
+        result = await self.db_session.execute(query)
         products = result.scalars().all()
         
         products_list = [{
@@ -74,7 +87,20 @@ class ProductService:
             "image_url": p.image_url
         } for p in products]
         
-        return {"success": True, "data": products_list, "error": None}
+        # Retornar produtos e metadados de paginação
+        return {
+            "success": True, 
+            "data": {
+                "products": products_list,
+                "meta": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_count": total_count,
+                    "total_pages": (total_count + page_size - 1) // page_size
+                }
+            }, 
+            "error": None
+        }
 
     async def get_product(self, product_id: int) -> Dict[str, Union[Dict, str, bool]]:
         """

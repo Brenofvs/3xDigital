@@ -95,20 +95,33 @@ async def create_order(request: web.Request) -> web.Response:
 @require_role(["admin"])
 async def list_orders(request: web.Request) -> web.Response:
     """
-    Lista todos os pedidos do sistema.
+    Lista todos os pedidos do sistema com suporte a paginação.
+
+    Query params:
+        page (int, opcional): Página de resultados (padrão: 1)
+        page_size (int, opcional): Tamanho da página (padrão: 20)
+        status (str, opcional): Filtro por status do pedido
 
     Returns:
-        web.Response: JSON contendo a lista de pedidos.
+        web.Response: JSON contendo a lista de pedidos e metadados de paginação.
     
     Apenas administradores podem visualizar todos os pedidos.
     """
     db = request.app[DB_SESSION_KEY]
     
+    # Extrai parâmetros da query
+    page = int(request.rel_url.query.get("page", 1))
+    page_size = int(request.rel_url.query.get("page_size", 20))
+    status = request.rel_url.query.get("status")
+    
+    # Limita o tamanho da página para evitar sobrecarga
+    page_size = min(page_size, 100)
+    
     # Usar OrderService em vez de acessar o banco diretamente
     order_service = OrderService(db)
-    result = await order_service.list_orders()
+    result = await order_service.list_orders(page, page_size, status)
     
-    return web.json_response({"orders": result["data"]}, status=200)
+    return web.json_response(result["data"], status=200)
 
 
 @routes.get("/orders/{order_id}")

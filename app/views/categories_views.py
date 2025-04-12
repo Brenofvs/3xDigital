@@ -29,17 +29,30 @@ routes = web.RouteTableDef()
 @require_role(["admin", "user", "affiliate"])
 async def list_categories(request: web.Request) -> web.Response:
     """
-    Lista todas as categorias cadastradas.
+    Lista todas as categorias cadastradas com suporte a paginação.
+
+    Query params:
+        page (int, opcional): Página de resultados (padrão: 1)
+        page_size (int, opcional): Tamanho da página (padrão: 20)
+        search (str, opcional): Termo de busca para filtrar categorias por nome
 
     Returns:
-        web.Response: Resposta JSON contendo a lista de categorias.
+        web.Response: Resposta JSON contendo a lista de categorias e metadados de paginação.
     """
     db = request.app[DB_SESSION_KEY]
     
-    category_service = CategoryService(db)
-    result = await category_service.list_categories()
+    # Extrai parâmetros da query
+    page = int(request.rel_url.query.get("page", 1))
+    page_size = int(request.rel_url.query.get("page_size", 20))
+    search = request.rel_url.query.get("search")
     
-    return web.json_response({"categories": result["data"]}, status=200)
+    # Limita o tamanho da página para evitar sobrecarga
+    page_size = min(page_size, 100)
+    
+    category_service = CategoryService(db)
+    result = await category_service.list_categories(page, page_size, search)
+    
+    return web.json_response(result["data"], status=200)
 
 @routes.get("/categories/{category_id}")
 @require_role(["admin", "user", "affiliate"])
