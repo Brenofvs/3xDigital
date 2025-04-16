@@ -196,7 +196,8 @@ class Product(Base):
         category_id (int): ID da categoria associada.
         created_at (datetime): Data de criação do registro.
         updated_at (datetime): Data da última atualização do registro.
-        image_url (str, opcional): URL da imagem do produto.
+        image_url (str, opcional): URL externa da imagem do produto (obsoleto).
+        image_path (str, opcional): Caminho relativo do arquivo de imagem do produto no servidor.
         has_custom_commission (bool): Indica se o produto tem comissão personalizada.
         commission_type (str): Tipo de comissão ('percentage' ou 'fixed').
         commission_value (float): Valor da comissão (percentual ou fixo em reais).
@@ -210,7 +211,8 @@ class Product(Base):
     category_id = Column(Integer, ForeignKey('categories.id'))
     created_at = Column(DateTime, default=TIMEZONE)
     updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
-    image_url = Column(String(255), nullable=True)
+    image_url = Column(String(255), nullable=True)  # Mantido para compatibilidade
+    image_path = Column(String(255), nullable=True)  # Caminho relativo da imagem no servidor
     has_custom_commission = Column(Boolean, default=False)
     commission_type = Column(Enum('percentage', 'fixed', name='commission_types'), nullable=True)
     commission_value = Column(Float, nullable=True)

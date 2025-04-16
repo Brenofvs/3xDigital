@@ -315,7 +315,8 @@ async def update_product(request: web.Request) -> web.Response:
         # Processar imagem, se fornecida
         if image_file:
             try:
-                image_url = await product_service.save_image(image_file)
+                image_path, image_url = await product_service.save_image(image_file)
+                updated_fields["image_path"] = image_path
                 updated_fields["image_url"] = image_url
             except Exception as e:
                 return web.json_response({"error": f"Erro ao salvar imagem: {str(e)}"}, status=400)

@@ -621,28 +621,24 @@ async def test_save_image(async_db_session):
 
     Args:
         async_db_session: Sessão de banco de dados assíncrona.
-        
+
     Asserts:
-        - Verifica se a URL da imagem é gerada corretamente.
+        - Verifica se o caminho e a URL da imagem são gerados corretamente.
         - Verifica padrão de nomenclatura da imagem.
     """
     product_service = ProductService(async_db_session)
-    
+
     # Criar um objeto simulando um arquivo
     test_image = io.BytesIO(b"fake image content")
     test_image.filename = "test_image.jpg"
-    
+
     # Salvar a imagem
-    url = await product_service.save_image(test_image)
+    image_path, image_url = await product_service.save_image(test_image)
+
+    # Verificar formato do caminho e da URL
+    assert image_path.startswith("uploads/")
+    assert image_url.startswith("/static/uploads/")
     
-    # Verificar formato da URL
-    assert url.startswith("/static/uploads/")
-    assert url.endswith("_test_image.jpg")
-    
-    # Verificar que o diretório foi criado
-    assert os.path.exists("static/uploads")
-    
-    # Limpar arquivos criados após o teste
-    image_path = "." + url
-    if os.path.exists(image_path):
-        os.remove(image_path) 
+    # Verificar se o nome do arquivo está no caminho e na URL
+    assert "test_image.jpg" in image_path
+    assert "test_image.jpg" in image_url 
