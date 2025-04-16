@@ -23,7 +23,7 @@ import pytest
 from app.services.order_service import OrderService
 from app.services.auth_service import AuthService
 from app.services.affiliate_service import AffiliateService
-from app.models.database import Product, Category, User
+from app.models.database import Product, Category, User, Affiliate, Order, OrderItem
 
 @pytest.mark.asyncio
 async def test_create_order(async_db_session):
@@ -531,6 +531,7 @@ async def test_process_affiliate_sale(async_db_session):
         - Verifica se a comissão é calculada e registrada corretamente.
         - Verifica comportamento com código de afiliado inválido.
         - Verifica comportamento com afiliado bloqueado.
+        - Verifica cálculo de comissão personalizada por produto.
     """
     # Criar usuário comprador
     auth_service = AuthService(async_db_session)
@@ -558,39 +559,108 @@ async def test_process_affiliate_sale(async_db_session):
     referral_code = affiliate_result["data"]["referral_code"]
     await affiliate_service.update_affiliate(affiliate_id, request_status="approved")
     
-    # Criar categoria e produto
+    # Criar categoria e produtos
     category = Category(name="Affiliate Sale Category")
     async_db_session.add(category)
     await async_db_session.commit()
     
-    product = Product(
-        name="Affiliate Sale Product",
-        description="For affiliate commission",
+    # Produto com comissão padrão do afiliado
+    product_default = Product(
+        name="Regular Commission Product",
+        description="Uses affiliate's standard commission",
         price=200.0,
         stock=5,
         category_id=category.id
     )
-    async_db_session.add(product)
-    await async_db_session.commit()
-    await async_db_session.refresh(product)
     
-    # Criar pedido
+    # Produto com comissão percentual personalizada
+    product_percentage = Product(
+        name="Percentage Commission Product",
+        description="Has custom percentage commission",
+        price=300.0,
+        stock=5,
+        category_id=category.id,
+        has_custom_commission=True,
+        commission_type="percentage",
+        commission_value=5.0  # 5% de comissão
+    )
+    
+    # Produto com comissão fixa personalizada
+    product_fixed = Product(
+        name="Fixed Commission Product",
+        description="Has custom fixed commission",
+        price=150.0,
+        stock=5,
+        category_id=category.id,
+        has_custom_commission=True,
+        commission_type="fixed",
+        commission_value=10.0  # R$10 de comissão fixa
+    )
+    
+    async_db_session.add_all([product_default, product_percentage, product_fixed])
+    await async_db_session.commit()
+    await async_db_session.refresh(product_default)
+    await async_db_session.refresh(product_percentage)
+    await async_db_session.refresh(product_fixed)
+    
+    # Teste 1: Pedido com produto de comissão padrão
     order_service = OrderService(async_db_session)
-    items = [{"product_id": product.id, "quantity": 1}]
+    items = [{"product_id": product_default.id, "quantity": 1}]
     create_result = await order_service.create_order(buyer.id, items)
     order_id = create_result["data"]["order_id"]
     
-    # Processar venda com código de afiliado
     result = await order_service.process_affiliate_sale(order_id, 200.0, referral_code)
     assert result is not None
     assert result["affiliate_id"] == affiliate_id
-    assert result["commission"] == 16.0  # 8% de R$200
+    assert round(result["commission"], 2) == 16.0  # 8% de R$200
     
-    # Processar com código inválido
+    # Teste 2: Pedido com produto de comissão percentual personalizada
+    items = [{"product_id": product_percentage.id, "quantity": 1}]
+    create_result = await order_service.create_order(buyer.id, items)
+    order_id = create_result["data"]["order_id"]
+    
+    result = await order_service.process_affiliate_sale(order_id, 300.0, referral_code)
+    assert result is not None
+    assert result["affiliate_id"] == affiliate_id
+    assert round(result["commission"], 2) == 15.0  # 5% de R$300
+    
+    # Teste 3: Pedido com produto de comissão fixa
+    items = [{"product_id": product_fixed.id, "quantity": 1}]
+    create_result = await order_service.create_order(buyer.id, items)
+    order_id = create_result["data"]["order_id"]
+    
+    result = await order_service.process_affiliate_sale(order_id, 150.0, referral_code)
+    assert result is not None
+    assert result["affiliate_id"] == affiliate_id
+    assert round(result["commission"], 2) == 10.0  # R$10 fixo
+    
+    # Teste 4: Pedido com múltiplos produtos e comissões diferentes
+    items = [
+        {"product_id": product_default.id, "quantity": 1},
+        {"product_id": product_percentage.id, "quantity": 1},
+        {"product_id": product_fixed.id, "quantity": 2}
+    ]
+    create_result = await order_service.create_order(buyer.id, items)
+    order_id = create_result["data"]["order_id"]
+    
+    result = await order_service.process_affiliate_sale(order_id, 650.0, referral_code)
+    assert result is not None
+    assert result["affiliate_id"] == affiliate_id
+    # Cálculo esperado:
+    # - product_default: 200 * 0.08 = 16.0
+    # - product_percentage: 300 * 0.05 = 15.0
+    # - product_fixed: 10.0 * 2 = 20.0
+    # Total: 51.0
+    assert round(result["commission"], 2) == 51.0
+    
+    # Teste 5: Processamento com código inválido
     result = await order_service.process_affiliate_sale(order_id, 200.0, "INVALID")
     assert result is None
     
-    # Bloquear afiliado e tentar processar
+    # Teste 6: Bloquear afiliado e tentar processar
     await affiliate_service.update_affiliate(affiliate_id, request_status="blocked")
     result = await order_service.process_affiliate_sale(order_id, 200.0, referral_code)
-    assert result is None 
+    assert result is None
+    
+    # Restaurar o status do afiliado para outros testes
+    await affiliate_service.update_affiliate(affiliate_id, request_status="approved") 

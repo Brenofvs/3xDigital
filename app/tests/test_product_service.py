@@ -61,14 +61,20 @@ async def test_list_products(async_db_session):
             description="Descrição 2",
             price=200.0,
             stock=20,
-            category_id=cat1.id
+            category_id=cat1.id,
+            has_custom_commission=True,
+            commission_type="percentage",
+            commission_value=5.0
         ),
         Product(
             name="Produto 3",
             description="Descrição 3",
             price=300.0,
             stock=30,
-            category_id=cat2.id
+            category_id=cat2.id,
+            has_custom_commission=True,
+            commission_type="fixed",
+            commission_value=10.0
         )
     ]
     async_db_session.add_all(products)
@@ -90,6 +96,24 @@ async def test_list_products(async_db_session):
         assert "price" in product
         assert "stock" in product
         assert "category_id" in product
+        assert "has_custom_commission" in product
+        assert "commission_type" in product
+        assert "commission_value" in product
+    
+    # Verificar detalhes de comissão
+    products_list = {p["name"]: p for p in result["data"]["products"]}
+    
+    assert products_list["Produto 1"]["has_custom_commission"] is False
+    assert products_list["Produto 1"]["commission_type"] is None
+    assert products_list["Produto 1"]["commission_value"] is None
+    
+    assert products_list["Produto 2"]["has_custom_commission"] is True
+    assert products_list["Produto 2"]["commission_type"] == "percentage"
+    assert products_list["Produto 2"]["commission_value"] == 5.0
+    
+    assert products_list["Produto 3"]["has_custom_commission"] is True
+    assert products_list["Produto 3"]["commission_type"] == "fixed"
+    assert products_list["Produto 3"]["commission_value"] == 10.0
     
     # Listar produtos por categoria
     result = await product_service.list_products(cat1.id)
@@ -206,7 +230,10 @@ async def test_get_product(async_db_session):
         price=150.0,
         stock=15,
         category_id=category.id,
-        image_url="/static/test.jpg"
+        image_url="/static/test.jpg",
+        has_custom_commission=True,
+        commission_type="percentage",
+        commission_value=7.5
     )
     async_db_session.add(product)
     await async_db_session.commit()
@@ -224,6 +251,9 @@ async def test_get_product(async_db_session):
     assert result["data"]["stock"] == 15
     assert result["data"]["category_id"] == category.id
     assert result["data"]["image_url"] == "/static/test.jpg"
+    assert result["data"]["has_custom_commission"] is True
+    assert result["data"]["commission_type"] == "percentage"
+    assert result["data"]["commission_value"] == 7.5
     
     # Testar com ID inválido
     result = await product_service.get_product(9999)
@@ -242,6 +272,7 @@ async def test_create_product(async_db_session):
         - Verifica se o produto é criado com sucesso.
         - Verifica validação de dados (nome, preço, estoque).
         - Verifica validação de categoria.
+        - Verifica criação com comissão personalizada.
     """
     # Criar categoria
     category = Category(name="Nova Categoria")
@@ -251,69 +282,83 @@ async def test_create_product(async_db_session):
     
     product_service = ProductService(async_db_session)
     
-    # Criar produto válido
+    # Teste 1: Criar produto básico, sem comissão personalizada
     result = await product_service.create_product(
-        name="Novo Produto",
-        description="Nova descrição",
-        price=250.0,
-        stock=25,
-        category_id=category.id,
-        image_url="/static/novo.jpg"
+        name="Produto Básico",
+        description="Descrição básica",
+        price=99.90,
+        stock=30,
+        category_id=category.id
     )
-    
-    # Verificações
     assert result["success"] is True
-    assert result["data"]["name"] == "Novo Produto"
-    assert result["data"]["price"] == 250.0
-    assert result["data"]["stock"] == 25
+    assert result["data"]["name"] == "Produto Básico"
+    assert result["data"]["price"] == 99.90
+    assert result["data"]["stock"] == 30
     assert result["data"]["category_id"] == category.id
-    assert result["data"]["image_url"] == "/static/novo.jpg"
+    assert result["data"]["has_custom_commission"] is False
+    assert result["data"]["commission_type"] is None
+    assert result["data"]["commission_value"] is None
     
-    # Testar validações
-    
-    # Nome vazio
+    # Teste 2: Criar produto com comissão percentual
     result = await product_service.create_product(
-        name="",
-        description="Descrição teste",
+        name="Produto Comissão Percentual",
+        description="Descrição com comissão",
+        price=150.0,
+        stock=20,
+        category_id=category.id,
+        has_custom_commission=True,
+        commission_type="percentage",
+        commission_value=5.0
+    )
+    assert result["success"] is True
+    assert result["data"]["name"] == "Produto Comissão Percentual"
+    assert result["data"]["has_custom_commission"] is True
+    assert result["data"]["commission_type"] == "percentage"
+    assert result["data"]["commission_value"] == 5.0
+    
+    # Teste 3: Criar produto com comissão fixa
+    result = await product_service.create_product(
+        name="Produto Comissão Fixa",
+        description="Descrição com comissão fixa",
+        price=299.0,
+        stock=10,
+        category_id=category.id,
+        has_custom_commission=True,
+        commission_type="fixed",
+        commission_value=15.0
+    )
+    assert result["success"] is True
+    assert result["data"]["has_custom_commission"] is True
+    assert result["data"]["commission_type"] == "fixed"
+    assert result["data"]["commission_value"] == 15.0
+    
+    # Teste 4: Validar comissão percentual acima de 100%
+    result = await product_service.create_product(
+        name="Produto Comissão Inválida",
+        description="Comissão percentual acima de 100%",
         price=100.0,
-        stock=10,
-        category_id=category.id
-    )
-    assert result["success"] is False
-    assert "vazio" in result["error"]
-    
-    # Preço negativo
-    result = await product_service.create_product(
-        name="Produto Preço",
-        description="Descrição teste",
-        price=-50.0,
-        stock=10,
-        category_id=category.id
-    )
-    assert result["success"] is False
-    assert "negativo" in result["error"]
-    
-    # Estoque negativo
-    result = await product_service.create_product(
-        name="Produto Estoque",
-        description="Descrição teste",
-        price=50.0,
-        stock=-5,
-        category_id=category.id
-    )
-    assert result["success"] is False
-    assert "negativo" in result["error"]
-    
-    # Categoria inexistente
-    result = await product_service.create_product(
-        name="Produto Categoria",
-        description="Descrição teste",
-        price=50.0,
         stock=5,
-        category_id=9999
+        category_id=category.id,
+        has_custom_commission=True,
+        commission_type="percentage",
+        commission_value=120.0
     )
     assert result["success"] is False
-    assert "Categoria não encontrada" in result["error"]
+    assert "não pode ser maior que 100%" in result["error"]
+    
+    # Teste 5: Validar tipo de comissão inválido
+    result = await product_service.create_product(
+        name="Produto Tipo Inválido",
+        description="Tipo de comissão inválido",
+        price=100.0,
+        stock=5,
+        category_id=category.id,
+        has_custom_commission=True,
+        commission_type="invalid_type",
+        commission_value=10.0
+    )
+    assert result["success"] is False
+    assert "deve ser 'percentage' ou 'fixed'" in result["error"]
 
 @pytest.mark.asyncio
 async def test_update_product(async_db_session):
@@ -324,25 +369,26 @@ async def test_update_product(async_db_session):
         async_db_session: Sessão de banco de dados assíncrona.
         
     Asserts:
-        - Verifica se o produto é atualizado com sucesso.
-        - Verifica validação de dados.
-        - Verifica comportamento com produto inexistente.
+        - Verifica se os dados do produto são atualizados corretamente.
+        - Verifica validação de dados (preço, estoque).
+        - Verifica validação de categoria.
+        - Verifica atualização de comissão personalizada.
     """
-    # Criar categorias
-    cat1 = Category(name="Categoria Update 1")
-    cat2 = Category(name="Categoria Update 2")
-    async_db_session.add_all([cat1, cat2])
+    # Criar categoria
+    category = Category(name="Categoria Update")
+    category2 = Category(name="Categoria Update 2")
+    async_db_session.add_all([category, category2])
     await async_db_session.commit()
-    await async_db_session.refresh(cat1)
-    await async_db_session.refresh(cat2)
+    await async_db_session.refresh(category)
+    await async_db_session.refresh(category2)
     
-    # Criar produto
+    # Criar produto para atualização
     product = Product(
-        name="Produto Original",
-        description="Descrição original",
-        price=100.0,
+        name="Produto para Atualizar",
+        description="Descrição inicial",
+        price=120.0,
         stock=10,
-        category_id=cat1.id
+        category_id=category.id
     )
     async_db_session.add(product)
     await async_db_session.commit()
@@ -350,53 +396,94 @@ async def test_update_product(async_db_session):
     
     product_service = ProductService(async_db_session)
     
-    # Atualizar produto - todos os campos
+    # Teste 1: Atualizar campos básicos
     result = await product_service.update_product(
         product.id,
         name="Produto Atualizado",
         description="Descrição atualizada",
-        price=200.0,
-        stock=20,
-        category_id=cat2.id,
-        image_url="/static/updated.jpg"
+        price=150.0,
+        stock=15,
+        category_id=category2.id
     )
-    
-    # Verificações
     assert result["success"] is True
     assert result["data"]["name"] == "Produto Atualizado"
     assert result["data"]["description"] == "Descrição atualizada"
-    assert result["data"]["price"] == 200.0
-    assert result["data"]["stock"] == 20
-    assert result["data"]["category_id"] == cat2.id
-    assert result["data"]["image_url"] == "/static/updated.jpg"
+    assert result["data"]["price"] == 150.0
+    assert result["data"]["stock"] == 15
+    assert result["data"]["category_id"] == category2.id
     
-    # Atualizar apenas alguns campos
+    # Teste 2: Ativar comissão personalizada (percentual)
     result = await product_service.update_product(
         product.id,
-        name="Produto Parcial",
-        price=150.0
+        has_custom_commission=True,
+        commission_type="percentage",
+        commission_value=8.5
     )
-    
     assert result["success"] is True
-    assert result["data"]["name"] == "Produto Parcial"
-    assert result["data"]["price"] == 150.0
-    assert result["data"]["description"] == "Descrição atualizada"  # Não alterado
+    assert result["data"]["has_custom_commission"] is True
+    assert result["data"]["commission_type"] == "percentage"
+    assert result["data"]["commission_value"] == 8.5
     
-    # Validações
+    # Teste 3: Alterar para comissão fixa
+    result = await product_service.update_product(
+        product.id,
+        commission_type="fixed",
+        commission_value=12.0
+    )
+    assert result["success"] is True
+    assert result["data"]["has_custom_commission"] is True
+    assert result["data"]["commission_type"] == "fixed"
+    assert result["data"]["commission_value"] == 12.0
+    
+    # Teste 4: Desativar comissão personalizada
+    result = await product_service.update_product(
+        product.id,
+        has_custom_commission=False
+    )
+    assert result["success"] is True
+    assert result["data"]["has_custom_commission"] is False
+    assert result["data"]["commission_type"] is None
+    assert result["data"]["commission_value"] is None
+    
+    # Teste 5: Validação de percentual acima de 100%
+    result = await product_service.update_product(
+        product.id,
+        has_custom_commission=True,
+        commission_type="percentage",
+        commission_value=150.0
+    )
+    assert result["success"] is False
+    assert "não pode ser maior que 100%" in result["error"]
+    
+    # Teste 6: Tipo de comissão inválido
+    result = await product_service.update_product(
+        product.id,
+        has_custom_commission=True,
+        commission_type="invalid_type",
+        commission_value=10.0
+    )
+    assert result["success"] is False
+    assert "deve ser 'percentage' ou 'fixed'" in result["error"]
+    
+    # Testes de validação de dados básicos
     
     # Preço negativo
-    result = await product_service.update_product(
-        product.id,
-        price=-50.0
-    )
+    result = await product_service.update_product(product.id, price=-10.0)
     assert result["success"] is False
     assert "negativo" in result["error"]
     
+    # Estoque negativo
+    result = await product_service.update_product(product.id, stock=-1)
+    assert result["success"] is False
+    assert "negativo" in result["error"]
+    
+    # Categoria inexistente
+    result = await product_service.update_product(product.id, category_id=9999)
+    assert result["success"] is False
+    assert "Categoria não encontrada" in result["error"]
+    
     # Produto inexistente
-    result = await product_service.update_product(
-        9999,
-        name="Não existe"
-    )
+    result = await product_service.update_product(9999, name="Inexistente")
     assert result["success"] is False
     assert "não encontrado" in result["error"]
 

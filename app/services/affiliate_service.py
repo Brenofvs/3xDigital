@@ -14,7 +14,8 @@ import uuid
 from typing import List, Optional, Dict, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
-from app.models.database import Affiliate, Sale, User, Order
+from sqlalchemy.orm import joinedload
+from app.models.database import Affiliate, Sale, User, Order, OrderItem, Product
 
 class AffiliateService:
     """
@@ -33,6 +34,7 @@ class AffiliateService:
         get_affiliate_by_id: Busca afiliado pelo ID do afiliado.
         get_affiliate_by_referral_code: Busca afiliado pelo código de referência.
         generate_referral_code: Gera código de referência único.
+        register_sale: Registra uma venda para o afiliado pelo código de referência.
     """
 
     def __init__(self, db_session: AsyncSession):
@@ -277,7 +279,7 @@ class AffiliateService:
             if not existing:
                 return referral_code
 
-    async def register_sale(self, order_id: int, referral_code: str) -> Optional[Dict]:
+    async def register_sale(self, order_id: int, referral_code: str) -> Dict[str, Union[Dict, str, bool]]:
         """
         Registra uma venda para o afiliado pelo código de referência.
 
@@ -286,35 +288,138 @@ class AffiliateService:
             referral_code (str): Código de referência do afiliado.
 
         Returns:
-            Optional[Dict]: Dados da venda registrada ou None se o afiliado ou pedido não forem encontrados.
+            Dict[str, Union[Dict, str, bool]]: Resultado da operação com detalhes da venda.
+                Estrutura: {"success": bool, "message": str, "data": Dict}
         """
+        # Verificar se o afiliado existe e está aprovado
         affiliate = await self.get_affiliate_by_referral_code(referral_code)
-        if not affiliate or affiliate.request_status != 'approved':
-            return None
+        if not affiliate:
+            return {
+                "success": False, 
+                "message": f"Afiliado não encontrado com código de referência: {referral_code}",
+                "data": None
+            }
             
+        if affiliate.request_status != 'approved':
+            return {
+                "success": False, 
+                "message": f"Afiliado não está aprovado (status: {affiliate.request_status})",
+                "data": None
+            }
+            
+        # Buscar o pedido e verificar se existe
         result = await self.db_session.execute(
             select(Order).where(Order.id == order_id)
         )
         order = result.scalar()
         if not order:
-            return None
-            
-        # Calcula a comissão baseada no total do pedido
-        commission = order.total * affiliate.commission_rate
+            return {
+                "success": False, 
+                "message": f"Pedido não encontrado: {order_id}",
+                "data": None
+            }
         
-        # Registra a venda
+        # Verificar se já existe uma venda registrada para este pedido e afiliado
+        result = await self.db_session.execute(
+            select(Sale).where(
+                and_(
+                    Sale.order_id == order_id,
+                    Sale.affiliate_id == affiliate.id
+                )
+            )
+        )
+        existing_sale = result.scalar()
+        if existing_sale:
+            return {
+                "success": True, 
+                "message": "Venda já registrada para este pedido e afiliado.",
+                "data": {
+                    "sale_id": existing_sale.id,
+                    "affiliate_id": existing_sale.affiliate_id,
+                    "order_id": existing_sale.order_id,
+                    "commission": existing_sale.commission
+                }
+            }
+        
+        # Buscar itens do pedido para calcular comissões personalizadas
+        result = await self.db_session.execute(
+            select(OrderItem)
+            .join(Product)
+            .filter(OrderItem.order_id == order_id)
+            .options(joinedload(OrderItem.product))
+        )
+        order_items = result.scalars().all()
+        
+        if not order_items:
+            return {
+                "success": False, 
+                "message": f"Pedido {order_id} não possui itens",
+                "data": None
+            }
+            
+        # Calcular a comissão considerando comissões personalizadas por produto
+        total_commission = 0.0
+        commission_details = []
+        
+        for item in order_items:
+            product = item.product
+            item_total = item.price * item.quantity
+            
+            if product.has_custom_commission and product.commission_type and product.commission_value is not None:
+                if product.commission_type == 'percentage':
+                    # Percentual do valor do produto
+                    item_commission = item_total * (product.commission_value / 100)
+                    commission_details.append({
+                        "product_id": product.id,
+                        "product_name": product.name,
+                        "type": "percentage",
+                        "value": product.commission_value,
+                        "item_total": item_total,
+                        "commission": item_commission
+                    })
+                elif product.commission_type == 'fixed':
+                    # Valor fixo por unidade
+                    item_commission = product.commission_value * item.quantity
+                    commission_details.append({
+                        "product_id": product.id,
+                        "product_name": product.name,
+                        "type": "fixed",
+                        "value": product.commission_value,
+                        "quantity": item.quantity,
+                        "commission": item_commission
+                    })
+            else:
+                # Usa a taxa de comissão padrão do afiliado
+                item_commission = item_total * affiliate.commission_rate
+                commission_details.append({
+                    "product_id": product.id,
+                    "product_name": product.name,
+                    "type": "standard",
+                    "rate": affiliate.commission_rate,
+                    "item_total": item_total,
+                    "commission": item_commission
+                })
+                
+            total_commission += item_commission
+        
+        # Registra a venda com a comissão calculada
         sale = Sale(
             affiliate_id=affiliate.id, 
             order_id=order.id, 
-            commission=commission
+            commission=total_commission
         )
         self.db_session.add(sale)
         await self.db_session.commit()
         await self.db_session.refresh(sale)
         
         return {
-            "sale_id": sale.id,
-            "affiliate_id": sale.affiliate_id,
-            "order_id": sale.order_id,
-            "commission": sale.commission
+            "success": True,
+            "message": "Venda registrada com sucesso para o afiliado.",
+            "data": {
+                "sale_id": sale.id,
+                "affiliate_id": sale.affiliate_id,
+                "order_id": sale.order_id,
+                "commission": total_commission,
+                "details": commission_details
+            }
         } 

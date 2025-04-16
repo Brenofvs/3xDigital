@@ -12,6 +12,7 @@ Classes:
 from typing import List, Optional, Dict, Union, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import joinedload
 from app.models.database import Order, OrderItem, Product, User, Affiliate, Sale
 
 class OrderService:
@@ -338,7 +339,8 @@ class OrderService:
 
     async def process_affiliate_sale(self, order_id: int, total: float, ref_code: str) -> Optional[Dict]:
         """
-        Processa uma venda de afiliado.
+        Processa uma venda de afiliado, calculando as comissões adequadas com base
+        nas configurações personalizadas de cada produto.
 
         Args:
             order_id (int): ID do pedido.
@@ -346,30 +348,88 @@ class OrderService:
             ref_code (str): Código de referência do afiliado.
 
         Returns:
-            Optional[Dict]: Informações da venda registrada ou None se o afiliado não for válido.
+            Optional[Dict]: Informações da venda registrada, incluindo detalhes das comissões
+                           por produto, ou None se o afiliado não for válido.
         """
+        # Buscar o afiliado pelo código de referência
         result = await self.db_session.execute(
             select(Affiliate).where(Affiliate.referral_code == ref_code)
         )
         affiliate = result.scalar()
         
-        if not affiliate or affiliate.request_status != 'approved':
+        if not affiliate:
+            print(f"Afiliado com código {ref_code} não encontrado")
+            return None
+            
+        if affiliate.request_status != 'approved':
+            print(f"Afiliado {affiliate.id} não está aprovado (status: {affiliate.request_status})")
             return None
 
-        # Calcula a comissão e registra a venda
-        commission = total * affiliate.commission_rate
+        # Buscar itens do pedido para verificar comissões personalizadas
+        result = await self.db_session.execute(
+            select(OrderItem)
+            .join(Product)
+            .filter(OrderItem.order_id == order_id)
+            .options(joinedload(OrderItem.product))
+        )
+        order_items = result.scalars().all()
+        
+        if not order_items:
+            print(f"Não foram encontrados itens para o pedido {order_id}")
+            return None
+            
+        # Calcular a comissão considerando comissões personalizadas por produto
+        total_commission = 0.0
+        commission_details = []
+        
+        for item in order_items:
+            product = item.product
+            item_total = item.price * item.quantity
+            item_commission = 0.0
+            commission_type = "padrão"
+            
+            if product.has_custom_commission:
+                if product.commission_type == 'percentage':
+                    # Percentual do valor do produto
+                    item_commission = item_total * (product.commission_value / 100)
+                    commission_type = f"percentual ({product.commission_value}%)"
+                else:  # fixed
+                    # Valor fixo por unidade
+                    item_commission = product.commission_value * item.quantity
+                    commission_type = f"fixo (R${product.commission_value} por unidade)"
+            else:
+                # Usa a taxa de comissão padrão do afiliado
+                item_commission = item_total * affiliate.commission_rate
+                commission_type = f"padrão ({affiliate.commission_rate * 100}%)"
+                
+            total_commission += item_commission
+            
+            # Registrar detalhes da comissão para este item
+            commission_details.append({
+                "product_id": product.id,
+                "product_name": product.name,
+                "quantity": item.quantity,
+                "item_total": item_total,
+                "commission_type": commission_type,
+                "commission_value": item_commission
+            })
+        
+        # Registra a venda com a comissão calculada
         sale = Sale(
             affiliate_id=affiliate.id, 
             order_id=order_id, 
-            commission=commission
+            commission=total_commission
         )
         
         self.db_session.add(sale)
         await self.db_session.commit()
         await self.db_session.refresh(sale)
         
+        print(f"Comissão total calculada: R${total_commission:.2f} para o afiliado {affiliate.id}")
+        
         return {
             "affiliate_id": affiliate.id,
-            "commission": commission,
-            "sale_id": sale.id
+            "commission": total_commission,
+            "sale_id": sale.id,
+            "details": commission_details
         } 

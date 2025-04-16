@@ -19,9 +19,10 @@ Test Functions:
 """
 
 import pytest
+from sqlalchemy import select
 from app.services.affiliate_service import AffiliateService
 from app.services.auth_service import AuthService
-from app.models.database import Order, Sale
+from app.models.database import Order, Sale, Category, Product, OrderItem, Affiliate
 
 @pytest.mark.asyncio
 async def test_request_affiliation(async_db_session):
@@ -260,60 +261,135 @@ async def test_list_affiliate_requests(async_db_session):
 
 @pytest.mark.asyncio
 async def test_register_sale(async_db_session):
-    """
-    Testa o registro de uma venda para um afiliado.
-
-    Args:
-        async_db_session: Sessão de banco de dados assíncrona.
-        
-    Asserts:
-        - Verifica se a venda é registrada corretamente com a comissão calculada.
-        - Verifica o comportamento com código de referência inválido.
-    """
-    # Criar usuário comprador
-    auth_service = AuthService(async_db_session)
-    user = await auth_service.create_user(
-        name="Buyer User",
-        email="buyer@example.com",
-        cpf="44444444444",
+    """Testa o registro de venda com comissões personalizadas."""
+    # Criar usuário e afiliado
+    user = await AuthService(async_db_session).create_user(
+        name="Usuário Teste",
+        email="teste@email.com",
+        cpf="12345678901",
         password="testpass",
         role="user"
     )
     
-    # Criar usuário afiliado
-    affiliate_user = await auth_service.create_user(
-        name="Affiliate User",
-        email="affiliate_sales@example.com",
-        cpf="55555555555",
-        password="testpass",
-        role="user"
-    )
+    # Criar um afiliado aprovado
+    affiliate = await AffiliateService(async_db_session).request_affiliation(user.id, 0.10)
+    affiliate_id = affiliate["data"]["id"]
+    referral_code = affiliate["data"]["referral_code"]
+    await AffiliateService(async_db_session).update_affiliate(affiliate_id, request_status="approved")
     
-    # Solicitar e aprovar afiliação
-    affiliate_service = AffiliateService(async_db_session)
-    result = await affiliate_service.request_affiliation(affiliate_user.id, 0.10)  # 10% de comissão
-    affiliate_id = result["data"]["id"]
-    referral_code = result["data"]["referral_code"]
-    await affiliate_service.update_affiliate(affiliate_id, request_status="approved")
-    
-    # Criar pedido para o usuário comprador
-    order = Order(user_id=user.id, status="processing", total=200.0)
-    async_db_session.add(order)
+    # Criar categoria
+    category = Category(name="Categoria Teste")
+    async_db_session.add(category)
     await async_db_session.commit()
+    
+    # Criar produtos com diferentes tipos de comissão
+    # Produto 1 - comissão padrão
+    product1 = Product(
+        name="Produto comissão padrão", 
+        description="Descrição do produto 1",
+        price=100.0,
+        stock=5,
+        category_id=category.id,
+        has_custom_commission=False
+    )
+    
+    # Produto 2 - comissão percentual personalizada
+    product2 = Product(
+        name="Produto comissão percentual", 
+        description="Descrição do produto 2",
+        price=200.0,
+        stock=5,
+        category_id=category.id,
+        has_custom_commission=True,
+        commission_type='percentage',
+        commission_value=5.0  # 5%
+    )
+    
+    # Produto 3 - comissão fixa personalizada
+    product3 = Product(
+        name="Produto comissão fixa", 
+        description="Descrição do produto 3",
+        price=150.0,
+        stock=5,
+        category_id=category.id,
+        has_custom_commission=True,
+        commission_type='fixed',
+        commission_value=8.0  # R$8 por unidade
+    )
+    
+    async_db_session.add_all([product1, product2, product3])
+    await async_db_session.commit()
+    await async_db_session.refresh(product1)
+    await async_db_session.refresh(product2)
+    await async_db_session.refresh(product3)
+    
+    # Criar um pedido
+    order = Order(user_id=user.id, status="completed", total=500.0)
+    async_db_session.add(order)
+    await async_db_session.commit()  # Comitar o pedido primeiro para obter o ID
     await async_db_session.refresh(order)
     
-    # Registrar venda com código de afiliado
-    result = await affiliate_service.register_sale(order.id, referral_code)
-    assert result is not None
-    assert result["affiliate_id"] == affiliate_id
-    assert result["order_id"] == order.id
-    assert result["commission"] == 20.0  # 10% de R$200
+    # Adicionar itens ao pedido
+    order_item1 = OrderItem(
+        order_id=order.id, 
+        product_id=product1.id, 
+        quantity=1, 
+        price=product1.price
+    )
     
-    # Tentar registrar com código inválido
-    result = await affiliate_service.register_sale(order.id, "INVALIDCODE")
-    assert result is None
+    order_item2 = OrderItem(
+        order_id=order.id, 
+        product_id=product2.id, 
+        quantity=1, 
+        price=product2.price
+    )
     
-    # Tentar registrar com afiliado bloqueado
+    order_item3 = OrderItem(
+        order_id=order.id, 
+        product_id=product3.id, 
+        quantity=2, 
+        price=product3.price
+    )
+    
+    async_db_session.add_all([order_item1, order_item2, order_item3])
+    await async_db_session.commit()
+    
+    # Testar registro de venda com cálculo de comissão personalizada
+    affiliate_service = AffiliateService(async_db_session)
+    result = await affiliate_service.register_sale(order_id=order.id, referral_code=referral_code)
+    
+    # Verificar sucesso da operação
+    assert result["success"] is True
+    assert "Venda registrada com sucesso" in result["message"]
+    assert result["data"] is not None
+    
+    # Verificar comissão total
+    # Produto 1: 100.0 * 0.10 = 10.0
+    # Produto 2: 200.0 * 0.05 = 10.0
+    # Produto 3: 8.0 * 2 = 16.0
+    expected_commission = 36.0
+    assert round(result["data"]["commission"], 2) == expected_commission
+    
+    # Verificar se a venda foi registrada no banco
+    sale_query = await async_db_session.execute(
+        select(Sale).where(Sale.order_id == order.id)
+    )
+    sale = sale_query.scalar_one_or_none()
+    assert sale is not None
+    assert sale.affiliate_id == affiliate_id
+    assert sale.order_id == order.id
+    assert round(sale.commission, 2) == expected_commission
+    
+    # Testar com código de referência inválido
+    result = await affiliate_service.register_sale(order_id=999, referral_code="CODIGO_INVALIDO")
+    assert result["success"] is False
+    assert "Afiliado não encontrado com código de referência" in result["message"]
+    assert result["data"] is None
+    
+    # Testar com afiliado bloqueado
+    # Alterar status do afiliado para bloqueado
     await affiliate_service.update_affiliate(affiliate_id, request_status="blocked")
-    result = await affiliate_service.register_sale(order.id, referral_code)
-    assert result is None 
+    result = await affiliate_service.register_sale(order_id=order.id, referral_code=referral_code)
+    assert result["success"] is False
+    assert "Afiliado não está aprovado" in result["message"]
+    assert result["data"] is None 

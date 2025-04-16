@@ -102,7 +102,10 @@ async def create_product(request: web.Request) -> web.Response:
                 "price": 100.0,
                 "stock": 10,
                 "category_id": 1,
-                "image_url": "URL ou caminho da imagem"  # Opcional
+                "image_url": "URL ou caminho da imagem",  # Opcional
+                "has_custom_commission": false,  # Opcional
+                "commission_type": "percentage",  # Opcional, 'percentage' ou 'fixed'
+                "commission_value": 10.0  # Opcional, percentual ou valor fixo
             }
         Caso multipart/form-data:
             Campos enviados individualmente e o arquivo de imagem no campo "image".
@@ -125,6 +128,9 @@ async def create_product(request: web.Request) -> web.Response:
         stock = None
         category_id = None
         image_file = None
+        has_custom_commission = False
+        commission_type = None
+        commission_value = None
 
         while True:
             field = await reader.next()
@@ -154,6 +160,18 @@ async def create_product(request: web.Request) -> web.Response:
             elif field.name == "image":
                 if field.filename:
                     image_file = field  # Guarda a referência ao campo para processar depois
+            elif field.name == "has_custom_commission":
+                value = await field.text()
+                has_custom_commission = value.lower() in ('true', '1', 'yes', 'sim')
+            elif field.name == "commission_type":
+                commission_type = await field.text()
+            elif field.name == "commission_value":
+                try:
+                    value = await field.text()
+                    if value:
+                        commission_value = float(value)
+                except ValueError:
+                    return web.json_response({"error": "Valor inválido para 'commission_value'"}, status=400)
                 
         if not name or price is None or stock is None:
             return web.json_response({"error": "Campos obrigatórios ausentes"}, status=400)
@@ -165,7 +183,10 @@ async def create_product(request: web.Request) -> web.Response:
             price=price,
             stock=stock,
             category_id=category_id,
-            image_file=image_file
+            image_file=image_file,
+            has_custom_commission=has_custom_commission,
+            commission_type=commission_type,
+            commission_value=commission_value
         )
     else:
         # Processamento JSON
@@ -177,6 +198,9 @@ async def create_product(request: web.Request) -> web.Response:
             stock = int(data["stock"])
             category_id = data.get("category_id")
             image_url = data.get("image_url")
+            has_custom_commission = data.get("has_custom_commission", False)
+            commission_type = data.get("commission_type")
+            commission_value = data.get("commission_value")
         except KeyError as e:
             return web.json_response({"error": f"Campo ausente: {str(e)}"}, status=400)
         except (ValueError, TypeError):
@@ -189,7 +213,10 @@ async def create_product(request: web.Request) -> web.Response:
             price=price,
             stock=stock,
             category_id=category_id,
-            image_url=image_url
+            image_url=image_url,
+            has_custom_commission=has_custom_commission,
+            commission_type=commission_type,
+            commission_value=commission_value
         )
     
     # Processar resultado da operação    
@@ -215,7 +242,10 @@ async def update_product(request: web.Request) -> web.Response:
             "price": 150.0,
             "stock": 20,
             "category_id": 2,
-            "image_url": "URL ou caminho da nova imagem"  # Opcional via JSON
+            "image_url": "URL ou caminho da nova imagem",  # Opcional via JSON
+            "has_custom_commission": true,  # Opcional
+            "commission_type": "percentage",  # Opcional, 'percentage' ou 'fixed'
+            "commission_value": 10.0  # Opcional, percentual ou valor fixo
         }
         Ou via multipart/form-data com o arquivo no campo "image".
 
@@ -269,19 +299,56 @@ async def update_product(request: web.Request) -> web.Response:
             elif field.name == "image":
                 if field.filename:
                     image_file = field
-                    updated_fields["image_file"] = field
-
-        # Atualizar usando o service
+            elif field.name == "has_custom_commission":
+                value = await field.text()
+                updated_fields["has_custom_commission"] = value.lower() in ('true', '1', 'yes', 'sim')
+            elif field.name == "commission_type":
+                updated_fields["commission_type"] = await field.text()
+            elif field.name == "commission_value":
+                try:
+                    value = await field.text()
+                    if value:
+                        updated_fields["commission_value"] = float(value)
+                except ValueError:
+                    return web.json_response({"error": "Valor inválido para 'commission_value'"}, status=400)
+                    
+        # Processar imagem, se fornecida
         if image_file:
-            updated_fields["image_file"] = image_file
-        result = await product_service.update_product(product_id, **updated_fields)
-    else:
-        # Processamento JSON
+            try:
+                image_url = await product_service.save_image(image_file)
+                updated_fields["image_url"] = image_url
+            except Exception as e:
+                return web.json_response({"error": f"Erro ao salvar imagem: {str(e)}"}, status=400)
+
+    else:  # JSON
         try:
             data = await request.json()
-            result = await product_service.update_product(product_id, **data)
-        except ValueError:
-            return web.json_response({"error": "Dados inválidos no JSON"}, status=400)
+            updated_fields = {}
+            
+            if "name" in data:
+                updated_fields["name"] = data["name"]
+            if "description" in data:
+                updated_fields["description"] = data["description"]
+            if "price" in data:
+                updated_fields["price"] = float(data["price"])
+            if "stock" in data:
+                updated_fields["stock"] = int(data["stock"])
+            if "category_id" in data:
+                updated_fields["category_id"] = data["category_id"]
+            if "image_url" in data:
+                updated_fields["image_url"] = data["image_url"]
+            if "has_custom_commission" in data:
+                updated_fields["has_custom_commission"] = bool(data["has_custom_commission"])
+            if "commission_type" in data:
+                updated_fields["commission_type"] = data["commission_type"]
+            if "commission_value" in data:
+                updated_fields["commission_value"] = float(data["commission_value"])
+                
+        except (ValueError, TypeError):
+            return web.json_response({"error": "Dados inválidos no payload JSON"}, status=400)
+
+    # Executar a atualização
+    result = await product_service.update_product(product_id, **updated_fields)
     
     if not result["success"]:
         return web.json_response({"error": result["error"]}, 

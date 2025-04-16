@@ -31,6 +31,7 @@ async def test_create_product_success(test_client_fixture):
         - O endpoint retorna status HTTP 201.
         - O produto criado contém os dados corretos, incluindo a associação com categoria.
         - O campo 'image_url' existe (com valor nulo se não informado).
+        - Os campos de comissão personalizada estão presentes.
     """
     client = test_client_fixture
     token = await get_admin_token(client)
@@ -40,6 +41,7 @@ async def test_create_product_success(test_client_fixture):
     cat_data = await cat_resp.json()
     category_id = cat_data["category"]["id"]
 
+    # Teste 1: Produto sem comissão personalizada
     prod_resp = await client.post("/products", json={
         "name": "Notebook",
         "description": "Notebook de última geração",
@@ -55,6 +57,48 @@ async def test_create_product_success(test_client_fixture):
     assert product["category_id"] == category_id
     assert "image_url" in product
     assert product["image_url"] is None
+    assert "has_custom_commission" in product
+    assert product["has_custom_commission"] is False
+    assert product["commission_type"] is None
+    assert product["commission_value"] is None
+    
+    # Teste 2: Produto com comissão percentual
+    prod_resp = await client.post("/products", json={
+        "name": "Monitor",
+        "description": "Monitor Ultra HD",
+        "price": 1800.00,
+        "stock": 10,
+        "category_id": category_id,
+        "has_custom_commission": True,
+        "commission_type": "percentage",
+        "commission_value": 7.5
+    }, headers={"Authorization": f"Bearer {token}"})
+    assert prod_resp.status == 201
+    prod_data = await prod_resp.json()
+    product = prod_data["product"]
+    assert product["name"] == "Monitor"
+    assert product["has_custom_commission"] is True
+    assert product["commission_type"] == "percentage"
+    assert product["commission_value"] == 7.5
+    
+    # Teste 3: Produto com comissão fixa
+    prod_resp = await client.post("/products", json={
+        "name": "Mouse Gamer",
+        "description": "Mouse para jogos",
+        "price": 299.90,
+        "stock": 20,
+        "category_id": category_id,
+        "has_custom_commission": True,
+        "commission_type": "fixed",
+        "commission_value": 15.00
+    }, headers={"Authorization": f"Bearer {token}"})
+    assert prod_resp.status == 201
+    prod_data = await prod_resp.json()
+    product = prod_data["product"]
+    assert product["name"] == "Mouse Gamer"
+    assert product["has_custom_commission"] is True
+    assert product["commission_type"] == "fixed"
+    assert product["commission_value"] == 15.00
 
 @pytest.mark.asyncio
 async def test_get_product_success(test_client_fixture):
@@ -109,6 +153,7 @@ async def test_update_product_success(test_client_fixture):
         - O endpoint retorna status HTTP 200.
         - Os dados do produto são atualizados conforme esperado.
         - O campo 'image_url' está presente.
+        - Os campos de comissão personalizada são atualizados corretamente.
     """
     client = test_client_fixture
     token = await get_admin_token(client)
@@ -128,6 +173,7 @@ async def test_update_product_success(test_client_fixture):
     prod_data = await prod_resp.json()
     product_id = prod_data["product"]["id"]
 
+    # Atualização básica
     update_resp = await client.put(f"/products/{product_id}", json={
         "name": "Fone de Ouvido Wireless",
         "price": 350.00
@@ -138,6 +184,43 @@ async def test_update_product_success(test_client_fixture):
     assert product["name"] == "Fone de Ouvido Wireless"
     assert product["price"] == 350.00
     assert "image_url" in product
+    assert product["has_custom_commission"] is False
+    
+    # Adicionar comissão personalizada
+    update_resp = await client.put(f"/products/{product_id}", json={
+        "has_custom_commission": True,
+        "commission_type": "percentage",
+        "commission_value": 10.0
+    }, headers={"Authorization": f"Bearer {token}"})
+    assert update_resp.status == 200
+    update_data = await update_resp.json()
+    product = update_data["product"]
+    assert product["has_custom_commission"] is True
+    assert product["commission_type"] == "percentage"
+    assert product["commission_value"] == 10.0
+    
+    # Alterar tipo de comissão
+    update_resp = await client.put(f"/products/{product_id}", json={
+        "commission_type": "fixed",
+        "commission_value": 25.0
+    }, headers={"Authorization": f"Bearer {token}"})
+    assert update_resp.status == 200
+    update_data = await update_resp.json()
+    product = update_data["product"]
+    assert product["has_custom_commission"] is True
+    assert product["commission_type"] == "fixed"
+    assert product["commission_value"] == 25.0
+    
+    # Desativar comissão personalizada
+    update_resp = await client.put(f"/products/{product_id}", json={
+        "has_custom_commission": False
+    }, headers={"Authorization": f"Bearer {token}"})
+    assert update_resp.status == 200
+    update_data = await update_resp.json()
+    product = update_data["product"]
+    assert product["has_custom_commission"] is False
+    assert product["commission_type"] is None
+    assert product["commission_value"] is None
 
 @pytest.mark.asyncio
 async def test_delete_product_success(test_client_fixture):

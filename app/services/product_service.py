@@ -84,7 +84,10 @@ class ProductService:
             "price": p.price,
             "stock": p.stock,
             "category_id": p.category_id,
-            "image_url": p.image_url
+            "image_url": p.image_url,
+            "has_custom_commission": p.has_custom_commission,
+            "commission_type": p.commission_type,
+            "commission_value": p.commission_value
         } for p in products]
         
         # Retornar produtos e metadados de paginação
@@ -129,7 +132,10 @@ class ProductService:
             "price": product.price,
             "stock": product.stock,
             "category_id": product.category_id,
-            "image_url": product.image_url
+            "image_url": product.image_url,
+            "has_custom_commission": product.has_custom_commission,
+            "commission_type": product.commission_type,
+            "commission_value": product.commission_value
         }
         
         return {"success": True, "data": product_data, "error": None}
@@ -142,7 +148,10 @@ class ProductService:
         stock: int,
         category_id: Optional[int] = None,
         image_url: Optional[str] = None,
-        image_file: Optional[Any] = None
+        image_file: Optional[Any] = None,
+        has_custom_commission: bool = False,
+        commission_type: Optional[str] = None,
+        commission_value: Optional[float] = None
     ) -> Dict[str, Union[Dict, str, bool]]:
         """
         Cria um novo produto.
@@ -155,6 +164,9 @@ class ProductService:
             category_id (Optional[int]): ID da categoria.
             image_url (Optional[str]): URL da imagem, se for fornecida via URL.
             image_file (Optional[Any]): Arquivo de imagem, se for upload.
+            has_custom_commission (bool): Indica se o produto tem comissão personalizada.
+            commission_type (Optional[str]): Tipo de comissão ('percentage' ou 'fixed').
+            commission_value (Optional[float]): Valor da comissão (percentual ou fixo).
 
         Returns:
             Dict[str, Union[Dict, str, bool]]: Resultado da operação.
@@ -172,6 +184,17 @@ class ProductService:
             
         if stock < 0:
             return {"success": False, "error": "Estoque não pode ser negativo.", "data": None}
+        
+        # Validar comissão personalizada
+        if has_custom_commission:
+            if not commission_type or commission_type not in ['percentage', 'fixed']:
+                return {"success": False, "error": "Tipo de comissão deve ser 'percentage' ou 'fixed'.", "data": None}
+            
+            if commission_value is None or commission_value < 0:
+                return {"success": False, "error": "Valor da comissão não pode ser negativo.", "data": None}
+            
+            if commission_type == 'percentage' and commission_value > 100:
+                return {"success": False, "error": "Percentual de comissão não pode ser maior que 100%.", "data": None}
             
         # Verificar se a categoria existe, se fornecida
         if category_id is not None:
@@ -194,7 +217,10 @@ class ProductService:
             price=price,
             stock=stock,
             category_id=category_id,
-            image_url=processed_image_url
+            image_url=processed_image_url,
+            has_custom_commission=has_custom_commission,
+            commission_type=commission_type if has_custom_commission else None,
+            commission_value=commission_value if has_custom_commission else None
         )
         
         self.db_session.add(new_product)
@@ -208,7 +234,10 @@ class ProductService:
             "price": new_product.price,
             "stock": new_product.stock,
             "category_id": new_product.category_id,
-            "image_url": new_product.image_url
+            "image_url": new_product.image_url,
+            "has_custom_commission": new_product.has_custom_commission,
+            "commission_type": new_product.commission_type,
+            "commission_value": new_product.commission_value
         }
         
         return {"success": True, "data": product_data, "error": None}
@@ -223,7 +252,8 @@ class ProductService:
 
         Args:
             product_id (int): ID do produto.
-            **kwargs: Campos a serem atualizados (name, description, price, stock, category_id, image_url).
+            **kwargs: Campos a serem atualizados (name, description, price, stock, category_id, image_url,
+                      has_custom_commission, commission_type, commission_value).
                 Também aceita image_file para upload de nova imagem.
 
         Returns:
@@ -245,7 +275,32 @@ class ProductService:
             
         if "stock" in kwargs and kwargs["stock"] < 0:
             return {"success": False, "error": "Estoque não pode ser negativo.", "data": None}
+        
+        # Validação de comissão personalizada
+        if "has_custom_commission" in kwargs and kwargs["has_custom_commission"]:
+            commission_type = kwargs.get("commission_type", product.commission_type)
+            commission_value = kwargs.get("commission_value", product.commission_value)
             
+            if not commission_type or commission_type not in ['percentage', 'fixed']:
+                return {"success": False, "error": "Tipo de comissão deve ser 'percentage' ou 'fixed'.", "data": None}
+            
+            if commission_value is None or commission_value < 0:
+                return {"success": False, "error": "Valor da comissão não pode ser negativo.", "data": None}
+            
+            if commission_type == 'percentage' and commission_value > 100:
+                return {"success": False, "error": "Percentual de comissão não pode ser maior que 100%.", "data": None}
+                
+            # Atualizar campos de comissão
+            product.has_custom_commission = True
+            product.commission_type = commission_type
+            product.commission_value = commission_value
+        elif "has_custom_commission" in kwargs and not kwargs["has_custom_commission"]:
+            # Desabilitar comissão personalizada
+            product.has_custom_commission = False
+            product.commission_type = None
+            product.commission_value = None
+            
+        # Verificar categoria
         if "category_id" in kwargs and kwargs["category_id"] is not None:
             category_valid = await self.validate_category(kwargs["category_id"])
             if not category_valid:
@@ -275,7 +330,10 @@ class ProductService:
             "price": product.price,
             "stock": product.stock,
             "category_id": product.category_id,
-            "image_url": product.image_url
+            "image_url": product.image_url,
+            "has_custom_commission": product.has_custom_commission,
+            "commission_type": product.commission_type,
+            "commission_value": product.commission_value
         }
         
         return {"success": True, "data": product_data, "error": None}
