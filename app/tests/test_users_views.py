@@ -23,7 +23,7 @@ import bcrypt
 from sqlalchemy import select
 from app.config.settings import DB_SESSION_KEY
 
-from app.models.database import User, Affiliate
+from app.models.database import User, Affiliate, Log
 
 
 @pytest_asyncio.fixture
@@ -376,3 +376,264 @@ async def test_reset_password(test_client_fixture, users_test_data):
     login_data = await login_resp.json()
     
     assert "access_token" in login_data
+
+
+@pytest.mark.asyncio
+async def test_create_user_by_admin(test_client_fixture, users_test_data):
+    """
+    Testa a criação de um novo usuário por um administrador.
+    
+    Args:
+        test_client_fixture: Cliente de teste
+        users_test_data: Dados de teste
+        
+    Asserts:
+        - Admin consegue criar um novo usuário
+        - Registros de log são criados
+        - Dados de usuário são retornados corretamente
+        - Campos obrigatórios são validados
+        - Validação de email/CPF duplicados
+        - Criação de usuários com diferentes papéis
+    """
+    data = users_test_data
+    
+    # Teste: criação de um novo usuário
+    new_user_data = {
+        "name": "Novo Usuário Teste",
+        "email": "novo_usuario@example.com",
+        "cpf": "98765432100",
+        "password": "senhasegura123",
+        "role": "manager",
+        "address": {
+            "street": "Rua de Teste",
+            "number": "123",
+            "complement": "Sala 45",
+            "neighborhood": "Bairro Teste",
+            "city": "Cidade Teste",
+            "state": "SP",
+            "zip_code": "12345678"
+        }
+    }
+    
+    resp = await test_client_fixture.post('/users',
+                       json=new_user_data,
+                       headers={"Authorization": f"Bearer {data['admin_token']}"})
+    
+    assert resp.status == 201
+    result = await resp.json()
+    
+    assert "message" in result
+    assert "Usuário criado com sucesso" in result["message"]
+    assert "user" in result
+    assert result["user"]["name"] == new_user_data["name"]
+    assert result["user"]["email"] == new_user_data["email"]
+    assert result["user"]["cpf"] == new_user_data["cpf"]
+    assert result["user"]["role"] == "manager"
+    assert "password" not in result["user"]
+    
+    # Verifica se o usuário foi criado no banco de dados
+    db = test_client_fixture.app[DB_SESSION_KEY]
+    result = await db.execute(select(User).where(User.email == new_user_data["email"]))
+    user = result.scalar_one_or_none()
+    
+    assert user is not None
+    assert user.name == new_user_data["name"]
+    assert user.role == "manager"
+    
+    # Verifica se o log foi registrado
+    result = await db.execute(
+        select(Log).where(
+            Log.user_id == data["admin_id"],
+            Log.action.like(f"%Criou um novo usuário%{user.id}%")
+        )
+    )
+    log = result.scalar_one_or_none()
+    
+    assert log is not None
+    assert str(user.id) in log.action
+    assert user.name in log.action
+    assert user.role in log.action
+    
+    # Teste: validação de campo obrigatório ausente
+    incomplete_data = {
+        "name": "Usuário Incompleto",
+        "email": "incompleto@example.com",
+        # CPF ausente propositalmente
+        "password": "senha123"
+    }
+    
+    resp = await test_client_fixture.post('/users',
+                           json=incomplete_data,
+                           headers={"Authorization": f"Bearer {data['admin_token']}"})
+    
+    assert resp.status == 400
+    error_data = await resp.json()
+    
+    assert "error" in error_data
+    assert "Campo obrigatório ausente" in error_data["error"]
+    assert "cpf" in error_data["error"]
+    
+    # Teste: email duplicado
+    duplicate_email_data = {
+        "name": "Outro Usuário",
+        "email": new_user_data["email"],  # Email já utilizado
+        "cpf": "11122233344",
+        "password": "senha123",
+        "role": "user"
+    }
+    
+    resp = await test_client_fixture.post('/users',
+                           json=duplicate_email_data,
+                           headers={"Authorization": f"Bearer {data['admin_token']}"})
+    
+    assert resp.status == 400
+    error_data = await resp.json()
+    
+    assert "error" in error_data
+    assert "E-mail ou CPF já está registrado" in error_data["error"]
+    
+    # Teste: CPF duplicado
+    duplicate_cpf_data = {
+        "name": "Outro Usuário",
+        "email": "outro_email@example.com",
+        "cpf": new_user_data["cpf"],  # CPF já utilizado
+        "password": "senha123",
+        "role": "user"
+    }
+    
+    resp = await test_client_fixture.post('/users',
+                           json=duplicate_cpf_data,
+                           headers={"Authorization": f"Bearer {data['admin_token']}"})
+    
+    assert resp.status == 400
+    error_data = await resp.json()
+    
+    assert "error" in error_data
+    assert "E-mail ou CPF já está registrado" in error_data["error"]
+    
+    # Teste: criação de usuário com papel 'affiliate'
+    affiliate_user_data = {
+        "name": "Novo Afiliado",
+        "email": "novo_afiliado@example.com",
+        "cpf": "55566677788",
+        "password": "senha123",
+        "role": "affiliate"
+    }
+    
+    resp = await test_client_fixture.post('/users',
+                           json=affiliate_user_data,
+                           headers={"Authorization": f"Bearer {data['admin_token']}"})
+    
+    assert resp.status == 201
+    result = await resp.json()
+    
+    assert result["user"]["role"] == "affiliate"
+    
+    # Verifica se o usuário afiliado foi criado no banco de dados
+    result = await db.execute(select(User).where(User.email == affiliate_user_data["email"]))
+    affiliate_user = result.scalar_one_or_none()
+    
+    assert affiliate_user is not None
+    assert affiliate_user.role == "affiliate"
+    
+    # Verifica se o log para criação do afiliado foi registrado
+    result = await db.execute(
+        select(Log).where(
+            Log.user_id == data["admin_id"],
+            Log.action.like(f"%Criou um novo usuário%{affiliate_user.id}%")
+        )
+    )
+    log = result.scalar_one_or_none()
+    
+    assert log is not None
+    assert "affiliate" in log.action
+
+
+@pytest.mark.asyncio
+async def test_create_user_authorization(test_client_fixture, users_test_data):
+    """
+    Testa as restrições de autorização no endpoint de criação de usuários.
+    
+    Args:
+        test_client_fixture: Cliente de teste
+        users_test_data: Dados de teste
+        
+    Asserts:
+        - Apenas administradores podem criar usuários
+        - Usuários normais recebem erro 403
+        - Afiliados recebem erro 403
+        - Gerentes recebem erro 403
+    """
+    data = users_test_data
+    
+    # Login do gerente
+    manager_login_resp = await test_client_fixture.post('/auth/login', json={
+        "identifier": "gerente@example.com",
+        "password": "userpass123"
+    })
+    manager_login_data = await manager_login_resp.json()
+    manager_token = manager_login_data['access_token']
+    
+    # Login do afiliado
+    affiliate_login_resp = await test_client_fixture.post('/auth/login', json={
+        "identifier": "afiliado@example.com",
+        "password": "userpass123"
+    })
+    affiliate_login_data = await affiliate_login_resp.json()
+    affiliate_token = affiliate_login_data['access_token']
+    
+    # Login do usuário comum
+    user_login_resp = await test_client_fixture.post('/auth/login', json={
+        "identifier": "usuario@example.com",
+        "password": "userpass123"
+    })
+    user_login_data = await user_login_resp.json()
+    user_token = user_login_data['access_token']
+    
+    # Dados para criação de usuário
+    new_user_data = {
+        "name": "Usuário Teste Autorização",
+        "email": "teste_auth@example.com",
+        "cpf": "12312312345",
+        "password": "senha123"
+    }
+    
+    # Teste: gerente não pode criar usuário
+    resp = await test_client_fixture.post('/users',
+                           json=new_user_data,
+                           headers={"Authorization": f"Bearer {manager_token}"})
+    
+    assert resp.status == 403
+    error_data = await resp.json()
+    assert "error" in error_data
+    assert "Acesso negado" in error_data["error"]
+    
+    # Teste: afiliado não pode criar usuário
+    resp = await test_client_fixture.post('/users',
+                           json=new_user_data,
+                           headers={"Authorization": f"Bearer {affiliate_token}"})
+    
+    assert resp.status == 403
+    error_data = await resp.json()
+    assert "error" in error_data
+    assert "Acesso negado" in error_data["error"]
+    
+    # Teste: usuário comum não pode criar usuário
+    resp = await test_client_fixture.post('/users',
+                           json=new_user_data,
+                           headers={"Authorization": f"Bearer {user_token}"})
+    
+    assert resp.status == 403
+    error_data = await resp.json()
+    assert "error" in error_data
+    assert "Acesso negado" in error_data["error"]
+    
+    # Teste: admin pode criar usuário (validação positiva)
+    resp = await test_client_fixture.post('/users',
+                           json=new_user_data,
+                           headers={"Authorization": f"Bearer {data['admin_token']}"})
+    
+    assert resp.status == 201
+    result = await resp.json()
+    assert "user" in result
+    assert result["user"]["email"] == new_user_data["email"]

@@ -11,6 +11,7 @@ Endpoints:
     - PUT /users/{user_id}/role: Atualiza o papel de um usuário
     - PUT /users/{user_id}/status: Bloqueia ou desbloqueia um usuário
     - PUT /users/{user_id}/reset-password: Redefine a senha de um usuário
+    - POST /users: Cria um novo usuário
 
 Regras de Negócio:
     - Apenas administradores podem acessar estes endpoints
@@ -23,6 +24,7 @@ Dependências:
     - SQLAlchemy para acesso a dados
     - app.services.user_service para lógica de usuários
     - app.middleware.authorization_middleware para controle de acesso
+    - app.services.auth_service para autenticação
 """
 
 from aiohttp import web
@@ -35,6 +37,7 @@ from app.services.user_service import (
     list_users, get_user_details, update_user_role,
     toggle_user_status, reset_user_password
 )
+from app.services.auth_service import AuthService
 
 # Definição das rotas
 routes = web.RouteTableDef()
@@ -338,5 +341,99 @@ async def reset_password_endpoint(request: web.Request) -> web.Response:
     except Exception as e:
         return web.json_response(
             {"error": f"Erro ao redefinir senha: {str(e)}"},
+            status=500
+        )
+
+
+@routes.post('/users')
+@require_role(['admin'])
+async def create_user(request: web.Request) -> web.Response:
+    """
+    Cria um novo usuário no sistema.
+    Apenas para administradores.
+    
+    JSON de entrada:
+        {
+            "name": "Nome Completo",
+            "email": "email@exemplo.com",
+            "cpf": "12345678900",
+            "password": "senha_segura",
+            "role": "user",   # Pode ser: admin, manager, affiliate, user
+            "address": {      # Opcional
+                "street": "Rua Exemplo",
+                "number": "123",
+                "complement": "Apto 101",
+                "neighborhood": "Centro",
+                "city": "São Paulo",
+                "state": "SP",
+                "zip_code": "01234567"
+            }
+        }
+    
+    Returns:
+        web.Response: JSON com detalhes do usuário criado
+    """
+    try:
+        # Obter dados da requisição
+        data = await request.json()
+        
+        # Verificar campos obrigatórios
+        required_fields = ['name', 'email', 'cpf', 'password']
+        for field in required_fields:
+            if field not in data:
+                return web.json_response(
+                    {"error": f"Campo obrigatório ausente: {field}"},
+                    status=400
+                )
+        
+        # Criar o serviço de autenticação
+        db = request.app[DB_SESSION_KEY]
+        auth_service = AuthService(db)
+        
+        # Criar o usuário
+        try:
+            user = await auth_service.create_user(
+                name=data['name'],
+                email=data['email'],
+                cpf=data['cpf'],
+                password=data['password'],
+                role=data.get('role', 'user'),  # Default para 'user' se não especificado
+                address=data.get('address')
+            )
+            
+            # Registrar ação de criação de usuário pelo admin no log de auditoria
+            admin_id = request["user"]["id"]
+            
+            # Criar registro de log
+            from datetime import datetime
+            from app.models.database import Log
+            
+            log = Log(
+                user_id=admin_id,
+                action=f"Criou um novo usuário (ID: {user.id}, Nome: {user.name}, Papel: {user.role})",
+                timestamp=datetime.now()
+            )
+            db.add(log)
+            await db.commit()
+            
+            # Retornar dados do usuário criado (sem a senha)
+            return web.json_response({
+                "message": f"Usuário criado com sucesso por administrador",
+                "user": {
+                    "id": user.id,
+                    "name": user.name,
+                    "email": user.email,
+                    "cpf": user.cpf,
+                    "role": user.role,
+                    "created_at": user.created_at.isoformat() if user.created_at else None
+                }
+            }, status=201)
+            
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+            
+    except Exception as e:
+        return web.json_response(
+            {"error": f"Erro ao criar usuário: {str(e)}"},
             status=500
         )
