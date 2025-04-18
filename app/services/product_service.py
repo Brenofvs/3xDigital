@@ -48,15 +48,31 @@ class ProductService:
         self, 
         category_id: Optional[int] = None,
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        product_id: Optional[int] = None,
+        price_min: Optional[float] = None,
+        price_max: Optional[float] = None,
+        in_stock: Optional[bool] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = "asc"
     ) -> Dict[str, Union[dict, str, bool]]:
         """
-        Lista todos os produtos cadastrados com suporte a paginação.
+        Lista produtos cadastrados com suporte a paginação e múltiplos filtros.
 
         Args:
-            category_id (Optional[int]): Filtra produtos por categoria, se fornecido.
+            category_id (Optional[int]): Filtra produtos por categoria.
             page (int): Número da página (padrão: 1)
             page_size (int): Tamanho da página (padrão: 20)
+            name (Optional[str]): Filtra produtos cujo nome contenha o texto informado.
+            description (Optional[str]): Filtra produtos cuja descrição contenha o texto informado.
+            product_id (Optional[int]): Filtra produto pelo ID exato.
+            price_min (Optional[float]): Filtra produtos com preço maior ou igual ao valor.
+            price_max (Optional[float]): Filtra produtos com preço menor ou igual ao valor.
+            in_stock (Optional[bool]): Se True, filtra produtos com estoque disponível.
+            sort_by (Optional[str]): Campo para ordenação (price, name, stock).
+            sort_order (Optional[str]): Direção da ordenação (asc ou desc).
 
         Returns:
             Dict[str, Union[dict, str, bool]]: Lista de produtos e metadados.
@@ -64,10 +80,54 @@ class ProductService:
         """
         # Construção da query base
         base_query = select(Product)
+        
+        # Aplicar filtros
+        if product_id is not None:
+            base_query = base_query.where(Product.id == product_id)
+            
         if category_id:
             base_query = base_query.where(Product.category_id == category_id)
+            
+        if name:
+            # Busca case-insensitive usando LIKE
+            base_query = base_query.where(Product.name.ilike(f"%{name}%"))
+            
+        if description:
+            # Busca case-insensitive na descrição
+            base_query = base_query.where(Product.description.ilike(f"%{description}%"))
+            
+        if price_min is not None:
+            base_query = base_query.where(Product.price >= price_min)
+            
+        if price_max is not None:
+            base_query = base_query.where(Product.price <= price_max)
+            
+        if in_stock:
+            base_query = base_query.where(Product.stock > 0)
+            
+        # Aplicar ordenação
+        if sort_by:
+            # Determinar a coluna para ordenação
+            if sort_by == "price":
+                order_column = Product.price
+            elif sort_by == "name":
+                order_column = Product.name
+            elif sort_by == "stock":
+                order_column = Product.stock
+            else:
+                # Se o sort_by não for válido, usa ordenação padrão
+                order_column = Product.id
+                
+            # Aplicar direção da ordenação
+            if sort_order and sort_order.lower() == "desc":
+                base_query = base_query.order_by(order_column.desc())
+            else:
+                base_query = base_query.order_by(order_column.asc())
+        else:
+            # Ordenação padrão por ID
+            base_query = base_query.order_by(Product.id)
         
-        # Consulta para contar o total de produtos
+        # Consulta para contar o total de produtos após aplicar os filtros
         count_query = select(func.count()).select_from(base_query.subquery())
         result = await self.db_session.execute(count_query)
         total_count = result.scalar_one()
@@ -108,7 +168,18 @@ class ProductService:
                     "page": page,
                     "page_size": page_size,
                     "total_count": total_count,
-                    "total_pages": (total_count + page_size - 1) // page_size
+                    "total_pages": (total_count + page_size - 1) // page_size,
+                    "filters_applied": {
+                        "category_id": category_id,
+                        "name": name,
+                        "description": description,
+                        "product_id": product_id,
+                        "price_min": price_min,
+                        "price_max": price_max,
+                        "in_stock": in_stock,
+                        "sort_by": sort_by,
+                        "sort_order": sort_order
+                    }
                 }
             }, 
             "error": None

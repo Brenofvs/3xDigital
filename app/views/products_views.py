@@ -31,12 +31,21 @@ routes = web.RouteTableDef()
 @require_role(["admin", "user", "affiliate"])
 async def list_products(request: web.Request) -> web.Response:
     """
-    Lista todos os produtos cadastrados com suporte a paginação.
+    Lista todos os produtos cadastrados com suporte a paginação e múltiplos filtros.
 
     Query params:
         category_id (int, opcional): Filtra produtos por categoria
         page (int, opcional): Página de resultados (padrão: 1)
         page_size (int, opcional): Tamanho da página (padrão: 20)
+        name (str, opcional): Filtra produtos cujo nome contenha o texto informado
+        description (str, opcional): Filtra produtos cuja descrição contenha o texto informado
+        product_id (int, opcional): Filtra produto pelo ID exato
+        price_min (float, opcional): Filtra produtos com preço maior ou igual ao valor
+        price_max (float, opcional): Filtra produtos com preço menor ou igual ao valor
+        price_between (str, opcional): Filtra produtos por faixa de preço no formato "min.xtomax.y"
+        in_stock (bool, opcional): Se "true", filtra produtos com estoque disponível
+        sort_by (str, opcional): Campo para ordenação (price, name, stock)
+        sort_order (str, opcional): Direção da ordenação (asc ou desc)
 
     Returns:
         web.Response: Resposta JSON contendo a lista de produtos e metadados de paginação.
@@ -47,6 +56,62 @@ async def list_products(request: web.Request) -> web.Response:
     category_id = request.rel_url.query.get("category_id")
     page = int(request.rel_url.query.get("page", 1))
     page_size = int(request.rel_url.query.get("page_size", 20))
+    name = request.rel_url.query.get("name")
+    description = request.rel_url.query.get("description")
+    
+    # Processa ID do produto
+    product_id = None
+    if "product_id" in request.rel_url.query:
+        try:
+            product_id = int(request.rel_url.query["product_id"])
+        except ValueError:
+            return web.json_response({"error": "ID de produto inválido"}, status=400)
+    
+    # Processa filtros de preço
+    price_min = None
+    price_max = None
+    
+    # Verificar se há um filtro price_between no formato "min.xtomax.y"
+    price_between = request.rel_url.query.get("price_between")
+    if price_between:
+        try:
+            # Divide a string em valores mínimo e máximo
+            if "to" in price_between:
+                min_value, max_value = price_between.split("to")
+                if min_value:
+                    price_min = float(min_value)
+                if max_value:
+                    price_max = float(max_value)
+        except (ValueError, TypeError):
+            return web.json_response({"error": "Formato inválido para 'price_between'. Use 'min.xtomax.y'"}, status=400)
+    else:
+        # Processamento individual de price_min e price_max
+        if "price_min" in request.rel_url.query:
+            try:
+                price_min = float(request.rel_url.query["price_min"])
+            except (ValueError, TypeError):
+                return web.json_response({"error": "Valor inválido para 'price_min'"}, status=400)
+                
+        if "price_max" in request.rel_url.query:
+            try:
+                price_max = float(request.rel_url.query["price_max"])
+            except (ValueError, TypeError):
+                return web.json_response({"error": "Valor inválido para 'price_max'"}, status=400)
+    
+    # Processa filtro de disponibilidade em estoque
+    in_stock = None
+    if "in_stock" in request.rel_url.query:
+        in_stock_param = request.rel_url.query["in_stock"].lower()
+        in_stock = in_stock_param in ('true', '1', 'yes', 'sim')
+    
+    # Processa parâmetros de ordenação
+    sort_by = request.rel_url.query.get("sort_by")
+    if sort_by and sort_by not in ["price", "name", "stock"]:
+        return web.json_response({"error": "Campo de ordenação inválido. Use 'price', 'name' ou 'stock'"}, status=400)
+        
+    sort_order = request.rel_url.query.get("sort_order", "asc").lower()
+    if sort_order not in ["asc", "desc"]:
+        return web.json_response({"error": "Direção de ordenação inválida. Use 'asc' ou 'desc'"}, status=400)
     
     # Limita o tamanho da página para evitar sobrecarga
     page_size = min(page_size, 100)
@@ -60,7 +125,19 @@ async def list_products(request: web.Request) -> web.Response:
         except ValueError:
             return web.json_response({"error": "ID de categoria inválido"}, status=400)
             
-    result = await product_service.list_products(category_id, page, page_size)
+    result = await product_service.list_products(
+        category_id=category_id, 
+        page=page, 
+        page_size=page_size,
+        name=name,
+        description=description,
+        product_id=product_id,
+        price_min=price_min,
+        price_max=price_max,
+        in_stock=in_stock,
+        sort_by=sort_by,
+        sort_order=sort_order
+    )
     
     return web.json_response(result["data"], status=200)
 
