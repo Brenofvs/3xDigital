@@ -7,6 +7,9 @@ frontend/
 diff.txt
 tests_logs.txt
 .cursorrules
+.vscode/
+static/
+media/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

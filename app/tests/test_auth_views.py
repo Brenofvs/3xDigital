@@ -48,6 +48,7 @@ Test Functions:
 """
 
 import pytest
+from app.tests.utils.auth_utils import get_admin_token
 
 @pytest.mark.asyncio
 async def test_register_user_aiohttp(test_client_fixture):
@@ -492,3 +493,162 @@ async def test_logout_with_refresh_token(test_client_fixture):
     assert refresh_resp.status == 401
     refresh_data = await refresh_resp.json()
     assert "error" in refresh_data
+
+@pytest.mark.asyncio
+async def test_login_with_temp_cart(test_client_fixture):
+    """
+    Testa o login de um usuário com um carrinho temporário, verificando 
+    se o carrinho é sincronizado corretamente.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - Verifica se a resposta retorna o status 200.
+        - Verifica se o campo "cart_synchronized" está presente e é True.
+        - Verifica se os detalhes do carrinho são retornados corretamente.
+    """
+    test_client = test_client_fixture
+    
+    # Cria um usuário para o teste
+    reg_resp = await test_client.post("/auth/register", json={
+        "name": "Cliente Carrinho",
+        "email": "cliente_carrinho@exemplo.com",
+        "cpf": "11122233344",
+        "password": "senha123"
+    })
+    assert reg_resp.status == 201
+    
+    # Gera um ID de sessão para o carrinho temporário
+    import uuid
+    session_id = str(uuid.uuid4())
+    
+    # Cria um produto para o teste
+    admin_token = await get_admin_token(test_client)
+    cat_resp = await test_client.post("/categories", json={"name": "Teste"}, 
+                                     headers={"Authorization": f"Bearer {admin_token}"})
+    cat_data = await cat_resp.json()
+    category_id = cat_data["category"]["id"]
+    
+    prod_resp = await test_client.post("/products", json={
+        "name": "Produto para Carrinho",
+        "description": "Descrição do produto",
+        "price": 99.90,
+        "stock": 10,
+        "category_id": category_id
+    }, headers={"Authorization": f"Bearer {admin_token}"})
+    prod_data = await prod_resp.json()
+    product_id = prod_data["product"]["id"]
+    
+    # Adiciona produto ao carrinho temporário
+    cart_resp = await test_client.post("/cart/items", json={
+        "product_id": product_id,
+        "quantity": 2
+    }, headers={"X-Session-ID": session_id})
+    assert cart_resp.status == 200
+    cart_data = await cart_resp.json()
+    assert cart_data["item_count"] == 1
+    assert len(cart_data["items"]) == 1
+    
+    # Faz login com o ID de sessão do carrinho
+    login_resp = await test_client.post("/auth/login", json={
+        "identifier": "cliente_carrinho@exemplo.com",
+        "password": "senha123"
+    }, headers={"X-Session-ID": session_id})
+    
+    assert login_resp.status == 200
+    login_data = await login_resp.json()
+    
+    # Verifica se o carrinho foi sincronizado
+    assert "cart_synchronized" in login_data
+    assert login_data["cart_synchronized"] is True
+    assert "cart" in login_data
+    assert login_data["cart"]["item_count"] == 1
+    assert len(login_data["cart"]["items"]) == 1
+    assert login_data["cart"]["items"][0]["product_id"] == product_id
+    assert login_data["cart"]["items"][0]["quantity"] == 2
+
+@pytest.mark.asyncio
+async def test_login_without_temp_cart(test_client_fixture):
+    """
+    Testa o login de um usuário sem carrinho temporário,
+    verificando que a resposta não inclui dados de carrinho.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - Verifica se a resposta retorna o status 200.
+        - Verifica se o campo "cart_synchronized" não está presente.
+    """
+    test_client = test_client_fixture
+    
+    # Cria um usuário para o teste
+    reg_resp = await test_client.post("/auth/register", json={
+        "name": "Cliente Sem Carrinho",
+        "email": "cliente_sem_carrinho@exemplo.com",
+        "cpf": "11122233355",
+        "password": "senha123"
+    })
+    assert reg_resp.status == 201
+    
+    # Faz login sem ID de sessão
+    login_resp = await test_client.post("/auth/login", json={
+        "identifier": "cliente_sem_carrinho@exemplo.com",
+        "password": "senha123"
+    })
+    
+    assert login_resp.status == 200
+    login_data = await login_resp.json()
+    
+    # Verifica que não há informações de carrinho
+    assert "cart_synchronized" not in login_data
+    assert "cart" not in login_data
+
+@pytest.mark.asyncio
+async def test_login_with_empty_temp_cart(test_client_fixture):
+    """
+    Testa o login de um usuário com um carrinho temporário vazio,
+    verificando que a resposta não inclui dados de carrinho.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - Verifica se a resposta retorna o status 200.
+        - Verifica se o campo "cart_synchronized" não está presente.
+    """
+    test_client = test_client_fixture
+    
+    # Cria um usuário para o teste
+    reg_resp = await test_client.post("/auth/register", json={
+        "name": "Cliente Carrinho Vazio",
+        "email": "cliente_carrinho_vazio@exemplo.com",
+        "cpf": "11122233366",
+        "password": "senha123"
+    })
+    assert reg_resp.status == 201
+    
+    # Gera um ID de sessão para o carrinho temporário
+    import uuid
+    session_id = str(uuid.uuid4())
+    
+    # Busca o carrinho vazio para garantir que ele existe no banco
+    cart_resp = await test_client.get("/cart/items", headers={"X-Session-ID": session_id})
+    assert cart_resp.status == 200
+    cart_data = await cart_resp.json()
+    assert cart_data["item_count"] == 0
+    assert len(cart_data["items"]) == 0
+    
+    # Faz login com o ID de sessão do carrinho vazio
+    login_resp = await test_client.post("/auth/login", json={
+        "identifier": "cliente_carrinho_vazio@exemplo.com",
+        "password": "senha123"
+    }, headers={"X-Session-ID": session_id})
+    
+    assert login_resp.status == 200
+    login_data = await login_resp.json()
+    
+    # Verifica que não há informações de carrinho sincronizado
+    assert "cart_synchronized" not in login_data
+    assert "cart" not in login_data

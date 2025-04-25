@@ -14,6 +14,8 @@ Test Functions:
     - test_delete_product_success(test_client_fixture)
     - test_list_products(test_client_fixture)
     - test_list_products_with_pagination(test_client_fixture)
+    - test_list_products_without_auth(test_client_fixture)
+    - test_get_product_without_auth(test_client_fixture)
 """
 
 import pytest
@@ -374,3 +376,96 @@ async def test_list_products_with_pagination(test_client_fixture):
     # Garante que não há produtos duplicados entre as páginas
     for pid in page2_ids:
         assert pid not in page1_ids
+
+@pytest.mark.asyncio
+async def test_list_products_without_auth(test_client_fixture):
+    """
+    Testa a listagem de produtos sem autenticação.
+
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+
+    Asserts:
+        - O endpoint retorna status HTTP 200.
+        - A resposta contém a lista de produtos.
+    """
+    client = test_client_fixture
+    
+    # Cria produtos usando um token de administrador
+    token = await get_admin_token(client)
+    
+    # Cria uma categoria para associação
+    cat_resp = await client.post("/categories", json={"name": "Eletrônicos"}, 
+                               headers={"Authorization": f"Bearer {token}"})
+    cat_data = await cat_resp.json()
+    category_id = cat_data["category"]["id"]
+    
+    # Cria alguns produtos para o teste
+    for i in range(3):
+        await client.post("/products", json={
+            "name": f"Produto Público {i+1}",
+            "description": f"Descrição do produto {i+1}",
+            "price": 100.0 * (i+1),
+            "stock": 5,
+            "category_id": category_id
+        }, headers={"Authorization": f"Bearer {token}"})
+    
+    # Faz a requisição SEM token de autenticação
+    resp = await client.get("/products")
+    
+    assert resp.status == 200
+    data = await resp.json()
+    
+    assert "products" in data
+    assert len(data["products"]) >= 3
+    assert "meta" in data
+    assert "page" in data["meta"]
+    assert "page_size" in data["meta"]
+    assert "total_count" in data["meta"]
+
+@pytest.mark.asyncio
+async def test_get_product_without_auth(test_client_fixture):
+    """
+    Testa a obtenção dos detalhes de um produto sem autenticação.
+    
+    Args:
+        test_client_fixture: Cliente de teste configurado para a aplicação AIOHTTP.
+        
+    Asserts:
+        - O endpoint retorna status HTTP 200.
+        - A resposta contém os detalhes do produto.
+    """
+    client = test_client_fixture
+    
+    # Cria um produto usando um token de administrador
+    token = await get_admin_token(client)
+    
+    # Cria uma categoria para associação
+    cat_resp = await client.post("/categories", json={"name": "Acessórios"},
+                               headers={"Authorization": f"Bearer {token}"})
+    cat_data = await cat_resp.json()
+    category_id = cat_data["category"]["id"]
+    
+    # Cria um produto para o teste
+    prod_resp = await client.post("/products", json={
+        "name": "Produto Detalhe Público",
+        "description": "Descrição de acesso público",
+        "price": 150.0,
+        "stock": 10,
+        "category_id": category_id
+    }, headers={"Authorization": f"Bearer {token}"})
+    
+    prod_data = await prod_resp.json()
+    product_id = prod_data["product"]["id"]
+    
+    # Faz a requisição SEM token de autenticação
+    resp = await client.get(f"/products/{product_id}")
+    
+    assert resp.status == 200
+    data = await resp.json()
+    
+    assert "product" in data
+    assert data["product"]["id"] == product_id
+    assert data["product"]["name"] == "Produto Detalhe Público"
+    assert data["product"]["description"] == "Descrição de acesso público"
+    assert data["product"]["price"] == 150.0

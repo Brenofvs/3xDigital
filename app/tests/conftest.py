@@ -35,6 +35,7 @@ from app.views.users_views import routes as users_routes
 from app.views.payment_views import routes as payment_routes
 from app.views.profile_views import routes as profile_routes
 from app.views.dashboard_views import routes as dashboard_routes
+from app.views.cart_views import routes as cart_routes
 
 # Adiciona o diretório raiz ao path para facilitar imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -119,6 +120,7 @@ async def test_client_fixture(setup_database):
     app.add_routes(payment_routes)
     app.add_routes(profile_routes)
     app.add_routes(dashboard_routes)
+    app.add_routes(cart_routes)
     
     server = TestServer(app)
     client = TestClient(server)

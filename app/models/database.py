@@ -19,6 +19,8 @@ Classes:
     ShippingAddress: Representa o endereço de entrega de um pedido.
     RefreshToken: Representa um token de atualização (refresh token) usado para gerar novos access tokens.
     UserAddress: Representa o endereço de um usuário.
+    TempCart: Representa um carrinho temporário para usuários não autenticados.
+    TempCartItem: Representa um item no carrinho temporário.
 
 Functions:
     create_database(db_url: str) -> None:
@@ -219,6 +221,49 @@ class Product(Base):
 
     category = relationship("Category", back_populates="products")
     order_items = relationship("OrderItem", order_by="OrderItem.id", back_populates="product")
+
+
+class TempCart(Base):
+    """
+    Representa um carrinho temporário para usuários não autenticados.
+
+    Attributes:
+        id (int): ID único do carrinho temporário.
+        session_id (str): ID da sessão do usuário, usado para identificar carrinhos anônimos.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
+    """
+    __tablename__ = 'temp_carts'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(255), nullable=False, unique=True)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
+    
+    items = relationship("TempCartItem", order_by="TempCartItem.id", back_populates="cart", cascade="all, delete-orphan")
+
+
+class TempCartItem(Base):
+    """
+    Representa um item no carrinho temporário.
+
+    Attributes:
+        id (int): ID único do item no carrinho temporário.
+        cart_id (int): ID do carrinho temporário associado.
+        product_id (int): ID do produto associado.
+        quantity (int): Quantidade do produto.
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
+    """
+    __tablename__ = 'temp_cart_items'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cart_id = Column(Integer, ForeignKey('temp_carts.id', ondelete="CASCADE"), nullable=False)
+    product_id = Column(Integer, ForeignKey('products.id', ondelete="CASCADE"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
+    
+    cart = relationship("TempCart", back_populates="items")
+    product = relationship("Product")
 
 
 class Order(Base):

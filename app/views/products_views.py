@@ -28,7 +28,6 @@ from app.services.product_service import ProductService
 routes = web.RouteTableDef()
 
 @routes.get("/products")
-@require_role(["admin", "user", "affiliate"])
 async def list_products(request: web.Request) -> web.Response:
     """
     Lista todos os produtos cadastrados com suporte a paginação e múltiplos filtros.
@@ -142,7 +141,6 @@ async def list_products(request: web.Request) -> web.Response:
     return web.json_response(result["data"], status=200)
 
 @routes.get("/products/{product_id}")
-@require_role(["admin", "user", "affiliate"])
 async def get_product(request: web.Request) -> web.Response:
     """
     Obtém os detalhes de um produto específico.

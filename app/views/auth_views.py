@@ -124,11 +124,15 @@ async def login_user(request: web.Request):
           "password": "..."
         }
 
+    Headers:
+        X-Session-ID: ID da sessão do usuário não autenticado (opcional).
+
     Args:
         request (web.Request): Objeto de requisição contendo o corpo da requisição em JSON.
 
     Returns:
         web.Response: Resposta JSON contendo o token de acesso, refresh token e outras informações.
+                     Se houver um carrinho temporário associado à sessão, ele será vinculado ao usuário.
     """
     try:
         data = await request.json()
@@ -149,14 +153,29 @@ async def login_user(request: web.Request):
             # Gera o refresh token
             refresh_token = await auth_service.generate_refresh_token(user)
             
-            return web.json_response({
+            response_data = {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
                 "token_type": "Bearer",
                 "expires_in": JWT_EXPIRATION_MINUTES * 60,  # Em segundos
                 "user_id": user.id,
                 "user_role": user.role
-            }, status=200)
+            }
+            
+            # Verifica se existe um carrinho temporário para sincronizar
+            session_id = request.headers.get("X-Session-ID")
+            if session_id:
+                from app.services.cart_service import CartService
+                cart_service = CartService(session)
+                
+                # Sincroniza o carrinho temporário com o usuário
+                cart_result = await cart_service.get_cart_items(session_id)
+                
+                if cart_result["success"] and cart_result["data"]["item_count"] > 0:
+                    response_data["cart"] = cart_result["data"]
+                    response_data["cart_synchronized"] = True
+            
+            return web.json_response(response_data, status=200)
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=401)
     except Exception as e:
