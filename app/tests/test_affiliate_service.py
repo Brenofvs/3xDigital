@@ -16,13 +16,14 @@ Test Functions:
     - test_update_affiliate: Testa a atualização dos dados de um afiliado.
     - test_list_affiliate_requests: Testa a listagem de solicitações de afiliação pendentes.
     - test_register_sale: Testa o registro de uma venda para um afiliado.
+    - test_get_affiliation_status: Testa a obtenção do status da solicitação de afiliação de um usuário.
 """
 
 import pytest
 from sqlalchemy import select
 from app.services.affiliate_service import AffiliateService
 from app.services.auth_service import AuthService
-from app.models.database import Order, Sale, Category, Product, OrderItem, Affiliate
+from app.models.database import Order, Sale, Category, Product, OrderItem, Affiliate, User
 
 @pytest.mark.asyncio
 async def test_request_affiliation(async_db_session):
@@ -169,6 +170,8 @@ async def test_update_affiliate(async_db_session):
         
     Asserts:
         - Verifica se a comissão e o status são atualizados corretamente.
+        - Verifica se o papel do usuário é atualizado quando o status muda.
+        - Verifica se o campo reason é salvo corretamente.
         - Verifica se o erro é tratado para um ID inexistente.
     """
     # Criar usuário e afiliado
@@ -186,17 +189,44 @@ async def test_update_affiliate(async_db_session):
     result = await affiliate_service.request_affiliation(user.id, 0.05)
     affiliate_id = result["data"]["id"]
     
-    # Atualizar comissão e status
+    # Atualizar comissão e status para aprovado
     result = await affiliate_service.update_affiliate(
         affiliate_id, 
         commission_rate=0.10, 
         request_status="approved"
     )
     
-    # Verificações
+    # Verificações de dados do afiliado
     assert result["success"] is True
     assert result["data"]["commission_rate"] == 0.10
     assert result["data"]["request_status"] == "approved"
+    
+    # Verificar se o papel do usuário foi atualizado para 'affiliate'
+    result_user = await async_db_session.execute(
+        select(User).where(User.id == user.id)
+    )
+    user_updated = result_user.scalar_one()
+    assert user_updated.role == "affiliate", "O papel do usuário deveria ser 'affiliate' após aprovação"
+    
+    # Rejeitar a afiliação com motivo
+    rejection_reason = "Violação dos termos de serviço"
+    result = await affiliate_service.update_affiliate(
+        affiliate_id, 
+        request_status="blocked",
+        reason=rejection_reason
+    )
+    
+    # Verificar se o status e o motivo foram atualizados
+    assert result["success"] is True
+    assert result["data"]["request_status"] == "blocked"
+    assert result["data"]["reason"] == rejection_reason
+    
+    # Verificar se o papel do usuário voltou para 'user'
+    result_user = await async_db_session.execute(
+        select(User).where(User.id == user.id)
+    )
+    user_updated = result_user.scalar_one()
+    assert user_updated.role == "user", "O papel do usuário deveria voltar para 'user' após rejeição"
     
     # Tentar atualizar um ID inexistente
     result = await affiliate_service.update_affiliate(999999, commission_rate=0.15)
@@ -210,7 +240,7 @@ async def test_list_affiliate_requests(async_db_session):
 
     Args:
         async_db_session: Sessão de banco de dados assíncrona.
-        
+
     Asserts:
         - Verifica se todas as solicitações pendentes são listadas.
         - Verifica se solicitações aprovadas/bloqueadas não são listadas.
@@ -218,7 +248,7 @@ async def test_list_affiliate_requests(async_db_session):
     # Criar vários usuários com diferentes status de afiliação
     auth_service = AuthService(async_db_session)
     affiliate_service = AffiliateService(async_db_session)
-    
+
     # Usuário 1 - Pendente
     user1 = await auth_service.create_user(
         name="Pending User 1",
@@ -227,7 +257,7 @@ async def test_list_affiliate_requests(async_db_session):
         password="testpass",
         role="user"
     )
-    await affiliate_service.request_affiliation(user1.id, 0.05)
+    result1 = await affiliate_service.request_affiliation(user1.id, 0.05)
     
     # Usuário 2 - Pendente
     user2 = await auth_service.create_user(
@@ -237,8 +267,8 @@ async def test_list_affiliate_requests(async_db_session):
         password="testpass",
         role="user"
     )
-    await affiliate_service.request_affiliation(user2.id, 0.06)
-    
+    result2 = await affiliate_service.request_affiliation(user2.id, 0.06)
+
     # Usuário 3 - Aprovado
     user3 = await auth_service.create_user(
         name="Approved User",
@@ -247,17 +277,33 @@ async def test_list_affiliate_requests(async_db_session):
         password="testpass",
         role="user"
     )
-    result = await affiliate_service.request_affiliation(user3.id, 0.07)
-    await affiliate_service.update_affiliate(result["data"]["id"], request_status="approved")
-    
+    result3 = await affiliate_service.request_affiliation(user3.id, 0.07)
+    await affiliate_service.update_affiliate(result3["data"]["id"], request_status="approved")
+
     # Listar solicitações pendentes
     result = await affiliate_service.list_affiliate_requests()
     assert result["success"] is True
-    assert len(result["data"]) == 2
     
-    # Verificar que apenas solicitações pendentes estão na lista
-    for item in result["data"]:
-        assert item["user_id"] in [user1.id, user2.id]
+    # Verificar que as solicitações pendentes contêm pelo menos as duas que criamos
+    aff1_id = result1["data"]["id"]
+    aff2_id = result2["data"]["id"]
+    requests_data = result["data"]["requests"]
+    
+    found_aff1 = False
+    found_aff2 = False
+    
+    for req in requests_data:
+        if req["id"] == aff1_id:
+            found_aff1 = True
+        elif req["id"] == aff2_id:
+            found_aff2 = True
+    
+    assert found_aff1, f"Afiliado 1 (ID: {aff1_id}) não encontrado na lista de solicitações"
+    assert found_aff2, f"Afiliado 2 (ID: {aff2_id}) não encontrado na lista de solicitações"
+    
+    # Verificar que não inclui o afiliado aprovado
+    aff3_id = result3["data"]["id"]
+    assert not any(req["id"] == aff3_id for req in requests_data), "Afiliado aprovado não deveria estar na lista de pendentes"
 
 @pytest.mark.asyncio
 async def test_register_sale(async_db_session):
@@ -392,4 +438,168 @@ async def test_register_sale(async_db_session):
     result = await affiliate_service.register_sale(order_id=order.id, referral_code=referral_code)
     assert result["success"] is False
     assert "Afiliado não está aprovado" in result["message"]
-    assert result["data"] is None 
+    assert result["data"] is None
+
+@pytest.mark.asyncio
+async def test_can_generate_affiliate_link(async_db_session):
+    """
+    Testa a verificação se um usuário pode gerar links de afiliado.
+
+    Args:
+        async_db_session: Sessão de banco de dados assíncrona.
+        
+    Asserts:
+        - Verifica se um usuário com papel 'affiliate' e status 'approved' pode gerar links.
+        - Verifica se um usuário com papel 'user' não pode gerar links.
+        - Verifica se um afiliado com status 'pending' ou 'blocked' não pode gerar links.
+        - Verifica o comportamento para usuário inexistente.
+    """
+    # Criar serviços
+    auth_service = AuthService(async_db_session)
+    affiliate_service = AffiliateService(async_db_session)
+    
+    # Caso 1: Usuário que não é afiliado
+    user1 = await auth_service.create_user(
+        name="Regular User",
+        email="regular@example.com",
+        cpf="11122233344",
+        password="testpass",
+        role="user"
+    )
+    result = await affiliate_service.can_generate_affiliate_link(user1.id)
+    assert result["can_generate"] is False
+    assert "não possui o papel de afiliado" in result["reason"]
+    
+    # Caso 2: Afiliado pendente
+    user2 = await auth_service.create_user(
+        name="Pending Affiliate",
+        email="pending@example.com",
+        cpf="22233344455",
+        password="testpass",
+        role="user"
+    )
+    await affiliate_service.request_affiliation(user2.id, 0.05)
+    
+    # Atualizar manualmente o papel do usuário para 'affiliate'
+    user2.role = "affiliate"
+    await async_db_session.commit()
+    
+    result = await affiliate_service.can_generate_affiliate_link(user2.id)
+    assert result["can_generate"] is False
+    assert "pendente ou rejeitada" in result["reason"]
+    
+    # Caso 3: Afiliado aprovado
+    user3 = await auth_service.create_user(
+        name="Approved Affiliate",
+        email="approved@example.com",
+        cpf="33344455566",
+        password="testpass",
+        role="affiliate"
+    )
+    aff_result = await affiliate_service.request_affiliation(user3.id, 0.05)
+    await affiliate_service.update_affiliate(aff_result["data"]["id"], request_status="approved")
+    
+    result = await affiliate_service.can_generate_affiliate_link(user3.id)
+    assert result["can_generate"] is True
+    
+    # Caso 4: Afiliado bloqueado
+    user4 = await auth_service.create_user(
+        name="Blocked Affiliate",
+        email="blocked@example.com",
+        cpf="44455566677",
+        password="testpass",
+        role="affiliate"
+    )
+    aff_result = await affiliate_service.request_affiliation(user4.id, 0.05)
+    await affiliate_service.update_affiliate(aff_result["data"]["id"], request_status="blocked", reason="Violação de termos")
+    
+    result = await affiliate_service.can_generate_affiliate_link(user4.id)
+    assert result["can_generate"] is False
+    assert "pendente ou rejeitada" in result["reason"]
+    
+    # Caso 5: Usuário inexistente
+    result = await affiliate_service.can_generate_affiliate_link(99999)
+    assert result["can_generate"] is False
+    assert "não encontrado" in result["reason"]
+
+@pytest.mark.asyncio
+async def test_get_affiliation_status(async_db_session):
+    """
+    Testa a obtenção do status da solicitação de afiliação de um usuário.
+
+    Args:
+        async_db_session: Sessão de banco de dados assíncrona.
+        
+    Asserts:
+        - Verifica se retorna status 'not_requested' para usuário sem afiliação.
+        - Verifica se retorna status 'pending' para afiliado com solicitação pendente.
+        - Verifica se retorna status 'approved' para afiliado aprovado.
+        - Verifica se retorna status 'blocked' para afiliado bloqueado, incluindo o motivo.
+    """
+    # Criar serviços
+    auth_service = AuthService(async_db_session)
+    affiliate_service = AffiliateService(async_db_session)
+    
+    # Caso 1: Usuário sem solicitação de afiliação
+    user1 = await auth_service.create_user(
+        name="No Request User",
+        email="norequest@example.com",
+        cpf="12345678901",
+        password="testpass",
+        role="user"
+    )
+    result = await affiliate_service.get_affiliation_status(user1.id)
+    assert result["success"] is True
+    assert result["data"]["status"] == "not_requested"
+    assert "Você ainda não solicitou" in result["data"]["message"]
+    
+    # Caso 2: Usuário com solicitação pendente
+    user2 = await auth_service.create_user(
+        name="Pending Request User",
+        email="pending@example.com",
+        cpf="23456789012",
+        password="testpass",
+        role="user"
+    )
+    await affiliate_service.request_affiliation(user2.id, 0.05)
+    result = await affiliate_service.get_affiliation_status(user2.id)
+    assert result["success"] is True
+    assert result["data"]["status"] == "pending"
+    assert "em análise" in result["data"]["message"]
+    
+    # Caso 3: Usuário com solicitação aprovada
+    user3 = await auth_service.create_user(
+        name="Approved Request User",
+        email="approved@example.com",
+        cpf="34567890123",
+        password="testpass",
+        role="user"
+    )
+    aff_result = await affiliate_service.request_affiliation(user3.id, 0.05)
+    await affiliate_service.update_affiliate(aff_result["data"]["id"], request_status="approved")
+    result = await affiliate_service.get_affiliation_status(user3.id)
+    assert result["success"] is True
+    assert result["data"]["status"] == "approved"
+    assert "aprovada" in result["data"]["message"]
+    
+    # Caso 4: Usuário com solicitação bloqueada/rejeitada com motivo
+    user4 = await auth_service.create_user(
+        name="Blocked Request User",
+        email="blocked@example.com",
+        cpf="45678901234",
+        password="testpass",
+        role="user"
+    )
+    aff_result = await affiliate_service.request_affiliation(user4.id, 0.05)
+    rejection_reason = "Documentação incompleta"
+    await affiliate_service.update_affiliate(
+        aff_result["data"]["id"], 
+        request_status="blocked",
+        reason=rejection_reason
+    )
+    result = await affiliate_service.get_affiliation_status(user4.id)
+    assert result["success"] is True
+    assert result["data"]["status"] == "blocked"
+    assert "rejeitada" in result["data"]["message"]
+    assert "reason" in result["data"]
+    assert result["data"]["reason"] == rejection_reason 

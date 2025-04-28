@@ -330,6 +330,7 @@ class Affiliate(Base):
         referral_code (str): Código de referência do afiliado.
         commission_rate (float): Taxa de comissão do afiliado.
         request_status (str): Status da solicitação de afiliação, podendo ser 'pending', 'approved' ou 'blocked'.
+        reason (str): Motivo da recusa de solicitação, quando aplicável.
         payment_info (dict): Informações de pagamento do afiliado (banco, agência, conta, etc).
         created_at (datetime): Data de criação do registro.
         updated_at (datetime): Data da última atualização do registro.
@@ -345,6 +346,7 @@ class Affiliate(Base):
         nullable=False,
         default='pending'
     )
+    reason = Column(Text, nullable=True)
     created_at = Column(DateTime, default=TIMEZONE)
     updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
 

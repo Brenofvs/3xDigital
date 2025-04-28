@@ -13,7 +13,7 @@ Classes:
 import uuid
 from typing import List, Optional, Dict, Union
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, update
 from sqlalchemy.orm import joinedload
 from app.models.database import Affiliate, Sale, User, Order, OrderItem, Product
 
@@ -35,6 +35,9 @@ class AffiliateService:
         get_affiliate_by_referral_code: Busca afiliado pelo código de referência.
         generate_referral_code: Gera código de referência único.
         register_sale: Registra uma venda para o afiliado pelo código de referência.
+        list_approved_affiliates: Lista todos os afiliados aprovados com paginação.
+        get_affiliation_status: Consulta o status da solicitação de afiliação do usuário.
+        can_generate_affiliate_link: Verifica se um usuário está autorizado a gerar links de afiliado.
     """
 
     def __init__(self, db_session: AsyncSession):
@@ -61,15 +64,37 @@ class AffiliateService:
         Raises:
             ValueError: Se o afiliado não for encontrado ou estiver inativo.
         """
+        from sqlalchemy import select
+        from app.models.database import User
+        
+        # Verifica se o usuário existe
+        result = await self.db_session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            return {"success": False, "error": "Usuário não encontrado.", "data": None}
+        
+        # Verifica se existe registro de afiliado
         affiliate = await self.get_affiliate_by_user_id(user_id)
-
+        
         if not affiliate:
             return {"success": False, "error": "Afiliado não encontrado.", "data": None}
         
+        # Verifica se o afiliado está aprovado
         if affiliate.request_status != 'approved':
             return {
                 "success": False, 
                 "error": "Afiliado inativo. Solicitação pendente ou rejeitada.",
+                "data": None
+            }
+        
+        # Verifica se o usuário tem o papel correto
+        if user.role != 'affiliate':
+            return {
+                "success": False, 
+                "error": "Usuário não possui permissão de afiliado.",
                 "data": None
             }
         
@@ -90,15 +115,37 @@ class AffiliateService:
         Raises:
             ValueError: Se o afiliado não for encontrado ou estiver inativo.
         """
+        from sqlalchemy import select
+        from app.models.database import User
+        
+        # Verifica se o usuário existe
+        result = await self.db_session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            return {"success": False, "error": "Usuário não encontrado.", "data": None}
+        
+        # Verifica se existe registro de afiliado
         affiliate = await self.get_affiliate_by_user_id(user_id)
 
         if not affiliate:
             return {"success": False, "error": "Afiliado não encontrado.", "data": None}
         
+        # Verifica se o afiliado está aprovado
         if affiliate.request_status != 'approved':
             return {
                 "success": False, 
                 "error": "Afiliado inativo. Solicitação pendente ou rejeitada.",
+                "data": None
+            }
+        
+        # Verifica se o usuário tem o papel correto
+        if user.role != 'affiliate':
+            return {
+                "success": False, 
+                "error": "Usuário não possui permissão de afiliado.",
                 "data": None
             }
         
@@ -161,7 +208,10 @@ class AffiliateService:
 
         Args:
             affiliate_id (int): ID do afiliado.
-            **kwargs: Campos a serem atualizados (commission_rate, request_status).
+            **kwargs: Campos a serem atualizados:
+                - commission_rate (float): Nova taxa de comissão
+                - request_status (str): Novo status ('approved', 'pending', 'blocked')
+                - reason (str): Motivo da recusa (quando request_status='blocked')
 
         Returns:
             Dict[str, Union[Dict, str, bool]]: Dicionário contendo o resultado da operação.
@@ -170,6 +220,9 @@ class AffiliateService:
         Raises:
             ValueError: Se o afiliado não for encontrado.
         """
+        from sqlalchemy import select, update
+        from app.models.database import User
+
         affiliate = await self.get_affiliate_by_id(affiliate_id)
         
         if not affiliate:
@@ -179,10 +232,39 @@ class AffiliateService:
             affiliate.commission_rate = kwargs["commission_rate"]
         
         if "request_status" in kwargs:
+            old_status = affiliate.request_status
             affiliate.request_status = kwargs["request_status"]
+            
+            # Atualiza o campo reason quando o status for 'blocked' (rejeitado)
+            if kwargs["request_status"] == "blocked" and "reason" in kwargs:
+                affiliate.reason = kwargs["reason"]
+            
+            # Quando aprovar o afiliado, atualizar o campo role do usuário para 'affiliate'
+            if kwargs["request_status"] == "approved" and old_status != "approved":
+                # Atualiza o role do usuário para 'affiliate'
+                await self.db_session.execute(
+                    update(User)
+                    .where(User.id == affiliate.user_id)
+                    .values(role='affiliate')
+                )
+            
+            # Quando rejeitar um afiliado que estava aprovado, reverte o role para 'user'
+            if kwargs["request_status"] == "blocked" and old_status == "approved":
+                # Atualiza o role do usuário para 'user'
+                await self.db_session.execute(
+                    update(User)
+                    .where(User.id == affiliate.user_id)
+                    .values(role='user')
+                )
         
         await self.db_session.commit()
         await self.db_session.refresh(affiliate)
+        
+        # Busca o usuário atualizado para verificar se o role foi realmente alterado
+        result = await self.db_session.execute(
+            select(User).where(User.id == affiliate.user_id)
+        )
+        user = result.scalar_one_or_none()
         
         return {
             "success": True, 
@@ -191,35 +273,235 @@ class AffiliateService:
                 "user_id": affiliate.user_id,
                 "referral_code": affiliate.referral_code,
                 "commission_rate": affiliate.commission_rate,
-                "request_status": affiliate.request_status
+                "request_status": affiliate.request_status,
+                "reason": affiliate.reason,
+                "user_role": user.role if user else None
             },
             "error": None
         }
 
-    async def list_affiliate_requests(self) -> Dict[str, Union[List[Dict], str, bool]]:
+    async def list_affiliate_requests(self, page: int = 1, per_page: int = 10) -> Dict[str, Union[Dict, str, bool]]:
         """
-        Lista todas as solicitações de afiliação pendentes.
+        Lista todas as solicitações de afiliação pendentes com paginação.
+
+        Args:
+            page (int): Número da página atual (começando em 1). Valor padrão: 1.
+            per_page (int): Quantidade de registros por página. Valor padrão: 10.
 
         Returns:
-            Dict[str, Union[List[Dict], str, bool]]: Dicionário contendo a lista de solicitações.
-                Estrutura: {"success": bool, "data": List[Dict], "error": str}
+            Dict[str, Union[Dict, str, bool]]: Dicionário contendo o resultado da operação.
+                Estrutura: {
+                    "success": bool,
+                    "data": {
+                        "requests": List[Dict],
+                        "total": int,
+                        "page": int,
+                        "per_page": int,
+                        "total_pages": int
+                    },
+                    "error": str
+                }
         """
-        result = await self.db_session.execute(
+        # Calculando o offset para paginação
+        offset = (page - 1) * per_page
+        
+        # Contando o total de solicitações de afiliação pendentes
+        count_result = await self.db_session.execute(
             select(Affiliate).where(Affiliate.request_status == 'pending')
         )
+        total_requests = len(count_result.scalars().all())
+        
+        # Buscando solicitações pendentes com paginação e carregando os dados de usuário
+        result = await self.db_session.execute(
+            select(Affiliate)
+            .options(joinedload(Affiliate.user))
+            .where(Affiliate.request_status == 'pending')
+            .order_by(Affiliate.created_at.desc())
+            .offset(offset)
+            .limit(per_page)
+        )
+        
         affiliates = result.scalars().all()
         
-        affiliates_list = [
-            {
-                "id": a.id, 
-                "user_id": a.user_id, 
-                "referral_code": a.referral_code, 
-                "commission_rate": a.commission_rate
-            }
-            for a in affiliates
-        ]
+        # Calculando o total de páginas
+        total_pages = (total_requests + per_page - 1) // per_page
         
-        return {"success": True, "data": affiliates_list, "error": None}
+        # Convertendo para dicionário com dados completos de usuário
+        requests_list = []
+        for affiliate in affiliates:
+            user = affiliate.user
+            if user is None:
+                # Se não encontrar o usuário, continue para o próximo afiliado
+                continue
+                
+            affiliate_data = {
+                "id": affiliate.id,
+                "referral_code": affiliate.referral_code,
+                "commission_rate": affiliate.commission_rate,
+                "request_status": affiliate.request_status,
+                "created_at": affiliate.created_at.isoformat(),
+                "user": {
+                    "id": user.id,
+                    "name": user.name,
+                    "email": user.email,
+                    "cpf": user.cpf,
+                    "role": user.role,
+                    "phone": user.phone,
+                    "active": user.active,
+                    "created_at": user.created_at.isoformat()
+                }
+            }
+            requests_list.append(affiliate_data)
+        
+        return {
+            "success": True,
+            "data": {
+                "requests": requests_list,
+                "total": total_requests,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages
+            },
+            "error": None
+        }
+
+    async def list_approved_affiliates(self, page: int = 1, per_page: int = 10) -> Dict[str, Union[Dict, str, bool]]:
+        """
+        Lista todos os afiliados aprovados com paginação.
+
+        Args:
+            page (int): Número da página atual (começando em 1). Valor padrão: 1.
+            per_page (int): Quantidade de registros por página. Valor padrão: 10.
+
+        Returns:
+            Dict[str, Union[Dict, str, bool]]: Dicionário contendo o resultado da operação.
+                Estrutura: {
+                    "success": bool,
+                    "data": {
+                        "affiliates": List[Dict],
+                        "total": int,
+                        "page": int,
+                        "per_page": int,
+                        "total_pages": int
+                    },
+                    "error": str
+                }
+        """
+        # Calculando o offset para paginação
+        offset = (page - 1) * per_page
+        
+        # Contando o total de afiliados aprovados
+        count_result = await self.db_session.execute(
+            select(Affiliate).where(Affiliate.request_status == 'approved')
+        )
+        total_affiliates = len(count_result.scalars().all())
+        
+        # Buscando afiliados aprovados com paginação e carregando os dados de usuário
+        result = await self.db_session.execute(
+            select(Affiliate)
+            .options(joinedload(Affiliate.user))
+            .where(Affiliate.request_status == 'approved')
+            .order_by(Affiliate.created_at.desc())
+            .offset(offset)
+            .limit(per_page)
+        )
+        
+        affiliates = result.scalars().all()
+        
+        # Calculando o total de páginas
+        total_pages = (total_affiliates + per_page - 1) // per_page
+        
+        # Convertendo para dicionário com dados completos de usuário
+        affiliates_list = []
+        for affiliate in affiliates:
+            user = affiliate.user
+            if user is None:
+                # Se não encontrar o usuário, continue para o próximo afiliado
+                continue
+                
+            affiliate_data = {
+                "id": affiliate.id,
+                "referral_code": affiliate.referral_code,
+                "commission_rate": affiliate.commission_rate,
+                "request_status": affiliate.request_status,
+                "created_at": affiliate.created_at.isoformat(),
+                "user": {
+                    "id": user.id,
+                    "name": user.name,
+                    "email": user.email,
+                    "cpf": user.cpf,
+                    "role": user.role,
+                    "phone": user.phone,
+                    "active": user.active,
+                    "created_at": user.created_at.isoformat()
+                }
+            }
+            affiliates_list.append(affiliate_data)
+        
+        return {
+            "success": True,
+            "data": {
+                "affiliates": affiliates_list,
+                "total": total_affiliates,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages
+            },
+            "error": None
+        }
+
+    async def get_affiliation_status(self, user_id: int) -> Dict[str, Union[Dict, str, bool]]:
+        """
+        Consulta o status da solicitação de afiliação do usuário.
+
+        Args:
+            user_id (int): ID do usuário.
+
+        Returns:
+            Dict[str, Union[Dict, str, bool]]: Dicionário contendo as informações de status.
+                Estrutura: {
+                    "success": bool,
+                    "data": {
+                        "status": str,
+                        "created_at": str,
+                        "updated_at": str,
+                        "message": str,
+                        "reason": str (opcional)
+                    },
+                    "error": str
+                }
+        """
+        affiliate = await self.get_affiliate_by_user_id(user_id)
+        
+        if not affiliate:
+            return {
+                "success": True, 
+                "data": {
+                    "status": "not_requested",
+                    "message": "Você ainda não solicitou afiliação."
+                },
+                "error": None
+            }
+        
+        # Mensagem e status específicos para cada status
+        message = "Sua solicitação está em análise."
+        if affiliate.request_status == 'approved':
+            message = "Sua solicitação foi aprovada. Você pode gerar seu link de afiliado."
+        elif affiliate.request_status == 'blocked':
+            message = "Sua solicitação foi rejeitada."
+        
+        status_data = {
+            "status": affiliate.request_status,
+            "created_at": affiliate.created_at.isoformat() if affiliate.created_at else None,
+            "updated_at": affiliate.updated_at.isoformat() if affiliate.updated_at else None,
+            "message": message
+        }
+        
+        # Inclui o motivo da rejeição, se houver
+        if affiliate.request_status == 'blocked' and affiliate.reason:
+            status_data["reason"] = affiliate.reason
+        
+        return {"success": True, "data": status_data, "error": None}
 
     async def get_affiliate_by_user_id(self, user_id: int) -> Optional[Affiliate]:
         """
@@ -422,4 +704,57 @@ class AffiliateService:
                 "commission": total_commission,
                 "details": commission_details
             }
-        } 
+        }
+
+    async def can_generate_affiliate_link(self, user_id: int) -> Dict[str, Union[bool, str]]:
+        """
+        Verifica se um usuário está autorizado a gerar links de afiliado.
+        
+        Para gerar links, o usuário deve:
+        1. Ter papel 'affiliate' na tabela User
+        2. Ter uma entrada na tabela Affiliate com request_status='approved'
+
+        Args:
+            user_id (int): ID do usuário a ser verificado.
+
+        Returns:
+            Dict[str, Union[bool, str]]: Dicionário com resultado da verificação:
+                {
+                    "can_generate": bool,
+                    "reason": str (opcional, presente quando can_generate é False)
+                }
+        """
+        from sqlalchemy import select
+        from app.models.database import User
+        
+        # Verifica se o usuário existe e tem o papel correto
+        result = await self.db_session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            return {"can_generate": False, "reason": "Usuário não encontrado."}
+        
+        if user.role != 'affiliate':
+            return {
+                "can_generate": False,
+                "reason": "Usuário não possui o papel de afiliado."
+            }
+        
+        # Verifica se o afiliado existe e está aprovado
+        affiliate = await self.get_affiliate_by_user_id(user_id)
+        if not affiliate:
+            return {
+                "can_generate": False,
+                "reason": "Registro de afiliado não encontrado."
+            }
+        
+        if affiliate.request_status != 'approved':
+            return {
+                "can_generate": False,
+                "reason": "Solicitação de afiliação pendente ou rejeitada."
+            }
+        
+        # Se chegou até aqui, o usuário pode gerar links
+        return {"can_generate": True} 
