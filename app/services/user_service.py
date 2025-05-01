@@ -145,14 +145,15 @@ async def get_user_details(
         "is_affiliate": False
     }
     
-    # Busca dados de afiliado, se for o caso
-    if user.role == 'affiliate':
-        result = await session.execute(
-            select(Affiliate).where(Affiliate.user_id == user_id)
-        )
-        affiliate = result.scalar_one_or_none()
-        
-        if affiliate:
+    # Busca dados de afiliado para qualquer usuário (independente do role)
+    result = await session.execute(
+        select(Affiliate).where(Affiliate.user_id == user_id)
+    )
+    affiliate = result.scalar_one_or_none()
+    
+    if affiliate:
+        # Se o usuário já for um afiliado aprovado (role == 'affiliate')
+        if user.role == 'affiliate':
             user_data["is_affiliate"] = True
             user_data["affiliate"] = {
                 "id": affiliate.id,
@@ -160,6 +161,15 @@ async def get_user_details(
                 "commission_rate": affiliate.commission_rate,
                 "request_status": affiliate.request_status
             }
+        
+        # Para qualquer usuário que tenha uma solicitação, adicionar affiliate_request
+        user_data["affiliate_request"] = {
+            "status": affiliate.request_status,
+            "reason": affiliate.reason,
+            "created_at": affiliate.created_at.isoformat() if affiliate.created_at else None,
+            "updated_at": affiliate.updated_at.isoformat() if affiliate.updated_at else None,
+            "referral_code": affiliate.referral_code if affiliate.request_status == 'approved' else None
+        }
     
     return user_data
 

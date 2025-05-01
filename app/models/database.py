@@ -21,6 +21,7 @@ Classes:
     UserAddress: Representa o endereço de um usuário.
     TempCart: Representa um carrinho temporário para usuários não autenticados.
     TempCartItem: Representa um item no carrinho temporário.
+    ProductAffiliate: Representa a relação entre um afiliado e um produto específico.
 
 Functions:
     create_database(db_url: str) -> None:
@@ -37,7 +38,7 @@ import enum
 import json
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Text, Float, Enum, DateTime, ForeignKey, Boolean
+    Column, Integer, String, Text, Float, Enum, DateTime, ForeignKey, Boolean, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.asyncio import (
@@ -318,7 +319,46 @@ class OrderItem(Base):
     product = relationship("Product", back_populates="order_items")
 
 
-# Trecho modificado de D:\#3xDigital\app\models\database.py
+class ProductAffiliate(Base):
+    """
+    Representa a relação entre um afiliado e um produto específico.
+
+    Attributes:
+        id (int): ID único da relação.
+        affiliate_id (int): ID do afiliado.
+        product_id (int): ID do produto.
+        commission_type (str): Tipo de comissão ('percentage' ou 'fixed').
+        commission_value (float): Valor da comissão (percentual ou fixo em reais).
+        status (str): Status da afiliação ('pending', 'approved', 'blocked').
+        reason (str): Motivo da recusa (quando status='blocked').
+        created_at (datetime): Data de criação do registro.
+        updated_at (datetime): Data da última atualização do registro.
+    """
+    __tablename__ = 'product_affiliates'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    affiliate_id = Column(Integer, ForeignKey('affiliates.id', ondelete="CASCADE"), nullable=False)
+    product_id = Column(Integer, ForeignKey('products.id', ondelete="CASCADE"), nullable=False)
+    commission_type = Column(Enum('percentage', 'fixed', name='product_commission_types'), nullable=False, default='percentage')
+    commission_value = Column(Float, nullable=False)
+    status = Column(
+        Enum('pending', 'approved', 'blocked', name='product_affiliate_status'),
+        nullable=False,
+        default='pending'
+    )
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=TIMEZONE)
+    updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
+    
+    # Relacionamentos
+    affiliate = relationship("Affiliate", backref="product_affiliations")
+    product = relationship("Product", backref="affiliates")
+    
+    # Definimos uma constraint para que um afiliado não possa ser vinculado 
+    # ao mesmo produto mais de uma vez
+    __table_args__ = (
+        UniqueConstraint('affiliate_id', 'product_id', name='unique_product_affiliate'),
+    )
+
 
 class Affiliate(Base):
     """
@@ -328,7 +368,8 @@ class Affiliate(Base):
         id (int): ID único do afiliado.
         user_id (int): ID do usuário associado ao afiliado.
         referral_code (str): Código de referência do afiliado.
-        commission_rate (float): Taxa de comissão do afiliado.
+        commission_rate (float): Taxa de comissão global do afiliado.
+        is_global_affiliate (bool): Indica se o afiliado pode promover todos os produtos.
         request_status (str): Status da solicitação de afiliação, podendo ser 'pending', 'approved' ou 'blocked'.
         reason (str): Motivo da recusa de solicitação, quando aplicável.
         payment_info (dict): Informações de pagamento do afiliado (banco, agência, conta, etc).
@@ -340,6 +381,7 @@ class Affiliate(Base):
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     referral_code = Column(String(255), nullable=False, unique=True)
     commission_rate = Column(Float, nullable=False)
+    is_global_affiliate = Column(Boolean, default=False)
     _payment_info = Column("payment_info", Text, nullable=True)  # Renomeando para _payment_info
     request_status = Column(
         Enum('pending', 'approved', 'blocked', name='affiliate_status'),
@@ -382,6 +424,7 @@ class Sale(Base):
         id (int): ID único da venda.
         affiliate_id (int): ID do afiliado associado à venda.
         order_id (int): ID do pedido associado à venda.
+        product_id (int): ID do produto específico que gerou a comissão.
         commission (float): Comissão gerada pela venda.
         created_at (datetime): Data de criação do registro.
         updated_at (datetime): Data da última atualização do registro.
@@ -390,12 +433,14 @@ class Sale(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     affiliate_id = Column(Integer, ForeignKey('affiliates.id'), nullable=False)
     order_id = Column(Integer, ForeignKey('orders.id'), nullable=False)
+    product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
     commission = Column(Float, nullable=False)
     created_at = Column(DateTime, default=TIMEZONE)
     updated_at = Column(DateTime, default=TIMEZONE, onupdate=TIMEZONE)
 
     affiliate = relationship("Affiliate", back_populates="sales")
     order = relationship("Order", back_populates="sales")
+    product = relationship("Product")
 
 
 class Payment(Base):

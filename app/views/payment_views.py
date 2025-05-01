@@ -41,7 +41,7 @@ from app.config.settings import DB_SESSION_KEY
 from app.middleware.authorization_middleware import require_role
 from app.services.payment_service import PaymentService
 from app.models.finance_models import PaymentGatewayConfig
-from app.models.database import Order
+from app.models.database import Order, OrderItem
 
 # Definição das rotas
 routes = web.RouteTableDef()
@@ -210,62 +210,108 @@ async def list_payment_gateways(request: web.Request) -> web.Response:
 @require_role(['user', 'admin', 'affiliate'])
 async def process_payment(request: web.Request) -> web.Response:
     """
-    Processa um pagamento utilizando um gateway configurado.
+    Processa um pagamento usando o gateway configurado.
     
     JSON de entrada:
         {
-            "gateway": "stripe", // ou mercado_pago
             "order_id": 123,
-            "amount": 99.90,
-            "payment_method": "credit_card", // ou outro método suportado pelo gateway
-            "customer_details": {
-                // detalhes específicos do cliente e pagamento
+            "gateway": "stripe", // opcional, se não informado usa o primeiro gateway ativo
+            "payment_method": "credit_card",
+            "payment_details": {
+                // Detalhes específicos do método de pagamento
             }
         }
     
     Returns:
-        web.Response: JSON com dados de pagamento para continuar o fluxo no front-end.
-    
-    Requer: Usuário autenticado (qualquer papel).
+        web.Response: JSON com informações da transação
     """
     try:
         data = await request.json()
         
-        # Validações básicas
-        gateway = data.get("gateway")
         order_id = data.get("order_id")
-        amount = data.get("amount")
-        payment_method = data.get("payment_method")
-        customer_details = data.get("customer_details", {})
-        
-        if not all([gateway, order_id, amount, payment_method]):
-            return web.json_response(
-                {"error": "Dados incompletos para processamento de pagamento"}, 
-                status=400
-            )
+        if not order_id:
+            return web.json_response({"error": "ID do pedido é obrigatório"}, status=400)
             
+        gateway = data.get("gateway")
+        payment_method = data.get("payment_method")
+        payment_details = data.get("payment_details", {})
+        
+        if not payment_method:
+            return web.json_response({"error": "Método de pagamento é obrigatório"}, status=400)
+        
         session = request.app[DB_SESSION_KEY]
         payment_service = PaymentService(session)
         
-        # Processa o pagamento usando o serviço apropriado
-        success, message, payment_data = await payment_service.process_payment(
-            gateway,
-            order_id,
-            amount,
-            payment_method,
-            customer_details
+        # Verifica se o pedido existe
+        result = await session.execute(
+            select(Order).where(Order.id == order_id)
+        )
+        order = result.scalar_one_or_none()
+        
+        if not order:
+            return web.json_response({"error": f"Pedido {order_id} não encontrado"}, status=404)
+        
+        # Verifica se o usuário atual é o dono do pedido
+        user = request["user"]
+        if order.user_id != user["id"] and user["role"] not in ["admin"]:
+            return web.json_response(
+                {"error": "Você não tem permissão para processar este pedido"}, 
+                status=403
+            )
+            
+        # Verificar se há um código de referência de afiliado nos cookies
+        referral_code = None
+        
+        # Primeiro verificamos cookie específico para este produto
+        product_ids = []
+        items_result = await session.execute(
+            select(OrderItem).where(OrderItem.order_id == order_id)
+        )
+        order_items = items_result.scalars().all()
+        for item in order_items:
+            product_ids.append(item.product_id)
+            
+        # Para cada produto no pedido, verifica se há cookie específico
+        for product_id in product_ids:
+            product_cookie_name = f'product_{product_id}_referral'
+            if product_cookie_name in request.cookies:
+                referral_code = request.cookies[product_cookie_name]
+                break
+        
+        # Se não encontrou cookie específico, verifica o cookie geral
+        if not referral_code and 'referral_code' in request.cookies:
+            referral_code = request.cookies['referral_code']
+            
+        # Processa o pagamento
+        success, message, transaction = await payment_service.process_payment(
+            order_id=order_id,
+            gateway_name=gateway,
+            payment_method=payment_method,
+            payment_details=payment_details
         )
         
         if not success:
             return web.json_response({"error": message}, status=400)
             
-        return web.json_response(payment_data, status=200)
-        
+        # Se o pagamento foi bem-sucedido e há um código de referência
+        # registra a venda para o afiliado
+        if referral_code:
+            from app.services.affiliate_service import AffiliateService
+            affiliate_service = AffiliateService(session)
+            
+            # Registra a venda usando o código de referência
+            await affiliate_service.register_sale(order_id, referral_code)
+            
+        # Retorna os dados da transação
+        return web.json_response({
+            "message": "Pagamento processado com sucesso",
+            "transaction_id": transaction.id,
+            "gateway_transaction_id": transaction.gateway_transaction_id,
+            "status": transaction.status,
+            "amount": transaction.amount
+        }, status=200)
     except Exception as e:
-        return web.json_response(
-            {"error": f"Erro ao processar pagamento: {str(e)}"}, 
-            status=500
-        )
+        return web.json_response({"error": f"Erro ao processar pagamento: {str(e)}"}, status=500)
 
 
 @routes.post('/payments/process/{order_id}')
@@ -360,52 +406,56 @@ async def process_payment_with_order_id(request: web.Request) -> web.Response:
 @routes.post('/payments/webhooks/{gateway}')
 async def receive_payment_webhook(request: web.Request) -> web.Response:
     """
-    Recebe webhooks dos gateways de pagamento.
+    Recebe webhooks de gateways de pagamento, como confirmações, cancelamentos, etc.
     
-    Params:
-        gateway (str): Nome do gateway ('stripe' ou 'mercado_pago').
+    URL params:
+        gateway (str): Nome do gateway que está enviando o webhook (stripe, mercado_pago, etc)
+    
+    Body:
+        Payload específico do webhook, conforme enviado pelo gateway.
     
     Returns:
-        web.Response: Confirmação de recebimento do webhook.
-    
-    Notas:
-        - Este endpoint NÃO requer autenticação, pois é chamado pelos serviços externos.
-        - As assinaturas dos webhooks são verificadas internamente.
+        web.Response: Confirmação de recebimento para o gateway.
     """
     try:
-        gateway = request.match_info.get("gateway")
-        if gateway not in ["stripe", "mercado_pago"]:
-            return web.json_response({"error": "Gateway não suportado"}, status=400)
+        gateway = request.match_info.get('gateway')
+        if not gateway:
+            return web.json_response({"error": "Gateway não especificado"}, status=400)
             
-        # Dados do webhook
-        if request.content_type == 'application/json':
-            webhook_data = await request.json()
-        else:
-            # Para form data (usado pelo Mercado Pago)
-            form_data = await request.post()
-            webhook_data = dict(form_data)
-            
+        # Obtém o payload do webhook
+        payload = await request.json() if request.content_type == 'application/json' else await request.read()
+        
+        # Obtém os headers para verificar assinaturas
+        headers = dict(request.headers)
+        
         session = request.app[DB_SESSION_KEY]
         payment_service = PaymentService(session)
         
-        # Processa o webhook usando o gateway apropriado
-        success, message, result = await payment_service.process_webhook(
-            gateway,
-            webhook_data
-        )
+        # Processa o webhook
+        result = await payment_service.process_webhook(gateway, payload, headers)
         
-        if not success:
-            # Ainda retorna 200 para não atrapalhar as tentativas de retentativa do gateway
-            return web.json_response({"error": message}, status=200)
+        if not result["success"]:
+            return web.json_response({"error": result["message"]}, status=400)
+        
+        # Verifica se houve confirmação de pagamento
+        if result.get("payment_confirmed") and result.get("order_id"):
+            order_id = result["order_id"]
+            
+            # Procura se há algum referral_code associado ao pedido (nos cookies ou registro)
+            referral_code = result.get("referral_code")
+            
+            # Se tiver código de referência, registra a comissão para o afiliado
+            if referral_code:
+                from app.services.affiliate_service import AffiliateService
+                affiliate_service = AffiliateService(session)
+                
+                # Registra a venda para o afiliado
+                await affiliate_service.register_sale(order_id, referral_code)
             
         return web.json_response({"message": "Webhook processado com sucesso"}, status=200)
-        
     except Exception as e:
-        # Ainda retorna 200 para não atrapalhar as tentativas de retentativa do gateway
-        return web.json_response(
-            {"error": f"Erro ao processar webhook: {str(e)}"}, 
-            status=200
-        )
+        # Muitos gateways esperam uma resposta 200 mesmo em caso de erro, para não tentar reenviar
+        return web.json_response({"error": f"Erro ao processar webhook: {str(e)}"}, status=200)
 
 
 @routes.post('/payments/webhook')

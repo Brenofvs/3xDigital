@@ -415,9 +415,14 @@ class OrderService:
             })
         
         # Registra a venda com a comissão calculada
+        # Usar o primeiro produto para atender a restrição NOT NULL
+        # Em um sistema real, seria ideal registrar a comissão para cada produto separadamente
+        first_product_id = order_items[0].product_id if order_items else None
+        
         sale = Sale(
             affiliate_id=affiliate.id, 
-            order_id=order_id, 
+            order_id=order_id,
+            product_id=first_product_id,  # Adicionado o product_id do primeiro produto 
             commission=total_commission
         )
         
